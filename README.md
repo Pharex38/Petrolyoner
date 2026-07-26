@@ -1,58 +1,70 @@
 # Petrolyoner
 
-Petrol sahibi simülasyonu / idle tycoon oyunu. iOS + Android.
+Petrol sahibi simülasyonu / idle tycoon oyunu. Kuş bakışı 3B saha, dikey mobil ekran için.
 
-> **İsim geçici.** "Petrolyoner" (petrol + milyoner) çalışma adı olarak seçildi; daha iyi bir isim bulunca değişecek. İsim değişirse `Assets/_Petrolyoner/` klasörü, C# namespace'leri ve `ProjectSettings` içindeki bundle identifier güncellenmeli.
+> **İsim geçici.** "Petrolyoner" (petrol + milyoner) çalışma adı; daha iyi bir isim bulununca değişecek.
 
 ## Teknoloji
 
-- **Unity 6000.5.1f1** (Unity 6.5)
-- Hedef platformlar: Android (API 24+), iOS (15+)
-- 2D, portre mod
+- **Three.js** (WebGL) + **TypeScript** + **Vite**
+- Hedef: mobil tarayıcı (dikey), sonrasında Capacitor ile iOS/Android mağaza paketi
 
-## Kurulum
+> Proje başlangıçta Unity ile kurulmuştu; `21abe9b` commit'inde Unity sürümü duruyor.
+> Three.js'e geçildi çünkü iterasyon çok daha hızlı (build yok, kaydet-yenile) ve
+> bu oyun türü ağırlıklı olarak UI + basit geometri.
 
-Bu repo Unity projesinin iskeletini içeriyor. Unity `Library/` klasörünü ilk açılışta kendisi üretecek.
-
-1. **Git LFS kur** (binary asset'ler için, ilk sprite eklenmeden önce yapılmalı):
-   ```bash
-   brew install git-lfs
-   cd Petrolyoner && git lfs install
-   ```
-
-2. **Projeyi aç:** Unity Hub → `Add` → `Add project from disk` → bu klasörü seç.
-
-3. **Paketleri ekle** (Window → Package Manager):
-   - Input System
-   - 2D Sprite / 2D Animation (ihtiyaca göre)
-
-4. **İlk sahne:** `Assets/_Petrolyoner/Scenes/` altına `Main.unity` oluştur, boş bir GameObject'e `GameManager` bileşenini ekle.
-
-### Unity Smart Merge (opsiyonel ama önerilir)
-
-Sahne ve prefab çakışmalarını çözmek için:
+## Çalıştırma
 
 ```bash
-git config merge.unityyamlmerge.name "Unity Smart Merge"
-git config merge.unityyamlmerge.driver '/Applications/Unity/Hub/Editor/6000.5.1f1/Unity.app/Contents/Tools/UnityYAMLMerge merge -p "$BASE" "$REMOTE" "$LOCAL" "$MERGED"'
+npm install
+npm run dev
 ```
+
+Tarayıcıda `http://localhost:5173`. Aynı ağdaki telefondan test için terminalde yazan
+`Network:` adresini kullanın — gerçek dokunmatik his için şart.
+
+| Komut | İş |
+|---|---|
+| `npm run dev` | Geliştirme sunucusu (HMR) |
+| `npm run build` | Tip kontrolü + production build (`dist/`) |
+| `npm run preview` | Build çıktısını yerelde sun |
+| `npm run typecheck` | Sadece tip kontrolü |
 
 ## Klasör yapısı
 
 ```
-Assets/_Petrolyoner/     Tüm proje asset'leri (3rd party asset'ler dışarıda kalsın)
-  Scripts/
-    Core/                Oyun döngüsü, ekonomi hesabı, sayı formatlama
-    Data/                ScriptableObject tanımları + save veri modelleri
-    Save/                Kayıt / yükleme / offline kazanç
-    UI/                  Ekran ve panel kontrolcüleri
-  Scenes/                Sahneler
-  Prefabs/               Prefab'ler
-  Art/                   Sprite ve UI görselleri
-  Audio/                 Ses
-  Settings/              ScriptableObject instance'ları (kuyu tanımları vb.)
-docs/                    Tasarım dokümanları
+src/
+  game/          Motordan bağımsız oyun mantığı — Three.js'i hiç bilmez
+    wells.ts     Kuyu tanımları ve denge değerleri (ayar burada)
+    economy.ts   GameEngine: gelir, yükseltme, offline kazanç, tick
+    save.ts      localStorage kayıt/yükleme, bozuk kayıt kurtarma
+    state.ts     Kayıt veri modeli
+    format.ts    K/M/B/T sayı biçimlendirme
+  scene/         3B görsel katman
+    world.ts     Sahne, ortografik kuş bakışı kamera, ışık, zemin, raycast
+    pumpjack.ts  Kuyu modeli ve pompa animasyonu
+  ui/hud.ts      DOM arayüzü (sahne üstünde katman)
+  main.ts        Bağlayıcı: giriş, ana döngü, yaşam döngüsü
+docs/            Tasarım dokümanları
 ```
+
+**Önemli ayrım:** `src/game/` içindeki hiçbir dosya Three.js import etmez. Görsel katman
+tamamen değişse bile oyun mantığı aynı kalır — nitekim Unity'den geçerken bu dosyalar
+neredeyse birebir taşındı.
+
+## Denge ayarı
+
+Tüm sayılar [src/game/wells.ts](src/game/wells.ts) içinde. Dev sunucusunda tarayıcı
+konsolundan deneme yapabilirsiniz:
+
+```js
+__petrolyoner.engine.addMoney(1e6)   // para ekle
+__petrolyoner.offline(3)             // 3 saatlik offline ekranını dene
+__petrolyoner.reset()                // kaydı sil, baştan başla
+__petrolyoner.engine.data.wells      // seviyeleri gör
+```
+
+Bu kanca sadece `npm run dev` sırasında var, production build'e girmez.
 
 ## Dokümanlar
 
@@ -61,6 +73,7 @@ docs/                    Tasarım dokümanları
 
 ## Kurallar
 
-- `Assets/_Petrolyoner/` dışına dosya koyma; Asset Store paketleri kendi klasörlerinde kalsın.
-- Keystore, `google-services.json`, imza sertifikaları **asla** commitlenmez (`.gitignore` içinde).
-- Para/üretim değerleri `double` ile tutuluyor. Formatlama için `NumberFormatter.Format()` kullan, `ToString()` çağırma.
+- Oyun mantığına Three.js sızdırma; `src/game/` saf TypeScript kalsın.
+- Para/üretim değerleri için `formatMoney()` kullan, ham sayı basma.
+- Kuyuların `id` alanı kayıt dosyasına yazılıyor — yayına çıktıktan sonra değiştirme.
+- Keystore, imza sertifikası, `.env` asla commitlenmez.

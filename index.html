@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0e1014" />
+    <meta name="description" content="Petrol sahibi simülasyonu / idle tycoon oyunu." />
+    <title>Petrolyoner</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="viewport"></div>
+
+      <div id="hud">
+        <header class="topbar">
+          <div class="money" id="money">₺0</div>
+          <div class="income" id="income">₺0 / sn</div>
+        </header>
+
+        <section class="wellcard">
+          <h2 id="well-name">Kuyu seç</h2>
+          <p id="well-stats"></p>
+          <button id="upgrade" type="button">—</button>
+        </section>
+      </div>
+
+      <div id="floaters"></div>
+
+      <div id="offline" class="overlay" hidden>
+        <div class="dialog">
+          <h2>Sen yokken saha çalıştı</h2>
+          <p id="offline-text"></p>
+          <button id="offline-continue" type="button">Devam</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

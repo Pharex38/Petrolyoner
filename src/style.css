@@ -1,0 +1,201 @@
+/* v0.1 prototip arayüzü. Dikey (portre) mobil öncelikli; masaüstünde de çalışır. */
+
+:root {
+  --accent: #27b7a8;
+  --accent-dim: #1c7d73;
+  --panel: rgba(14, 16, 20, 0.9);
+  --text: #f5f2ec;
+  --text-dim: #a8aeb6;
+  --disabled: #4a4f57;
+
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #0e1014;
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Oyun alanında kaydırma ve çift dokunuşla yakınlaştırma olmasın. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+#viewport {
+  position: absolute;
+  inset: 0;
+}
+
+#viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* --- HUD --- */
+
+#hud {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: calc(var(--safe-top) + 12px) 12px calc(var(--safe-bottom) + 12px);
+  /* Dokunuşlar varsayılan olarak sahaya geçsin; sadece panel yakalasın. */
+  pointer-events: none;
+}
+
+.topbar {
+  background: var(--panel);
+  border-radius: 16px;
+  padding: 12px 16px;
+  text-align: center;
+  backdrop-filter: blur(8px);
+}
+
+.money {
+  font-size: clamp(28px, 8vw, 44px);
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.income {
+  margin-top: 2px;
+  font-size: clamp(14px, 3.6vw, 18px);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.wellcard {
+  pointer-events: auto;
+  background: var(--panel);
+  border-radius: 20px;
+  padding: 16px;
+  text-align: center;
+  backdrop-filter: blur(8px);
+}
+
+.wellcard h2 {
+  margin: 0;
+  font-size: clamp(18px, 5vw, 24px);
+}
+
+.wellcard p {
+  margin: 6px 0 14px;
+  font-size: clamp(13px, 3.4vw, 16px);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+button {
+  width: 100%;
+  padding: 16px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #06211f;
+  font-size: clamp(15px, 4.2vw, 19px);
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+button:disabled {
+  background: var(--disabled);
+  color: #9aa0a8;
+  cursor: default;
+}
+
+button:not(:disabled):active {
+  background: var(--accent-dim);
+  transform: translateY(1px);
+}
+
+/* --- Uçuşan kazanç yazıları --- */
+
+#floaters {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.floater {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: clamp(16px, 4.5vw, 22px);
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+  white-space: nowrap;
+  animation: float-up 0.9s ease-out forwards;
+}
+
+@keyframes float-up {
+  from {
+    opacity: 1;
+    translate: 0 0;
+  }
+  to {
+    opacity: 0;
+    translate: 0 -70px;
+  }
+}
+
+/* --- Offline ekranı --- */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.overlay[hidden] {
+  display: none;
+}
+
+.dialog {
+  width: min(420px, 100%);
+  background: #171a20;
+  border-radius: 22px;
+  padding: 28px 24px 24px;
+  text-align: center;
+}
+
+.dialog h2 {
+  margin: 0 0 12px;
+  font-size: clamp(19px, 5.2vw, 24px);
+}
+
+.dialog p {
+  margin: 0 0 22px;
+  font-size: clamp(15px, 4vw, 18px);
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.dialog strong {
+  color: var(--accent);
+}
