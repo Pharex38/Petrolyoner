@@ -7,31 +7,59 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#0e1014" />
-    <meta name="description" content="Petrol sahibi simülasyonu / idle tycoon oyunu." />
+    <meta name="description" content="Akaryakıt istasyonu işletme oyunu." />
     <title>Petrolyoner</title>
   </head>
   <body>
     <div id="app">
       <div id="viewport"></div>
 
+      <div id="car-labels"></div>
+
       <div id="hud">
         <header class="topbar">
           <div class="money" id="money">₺0</div>
-          <div class="income" id="income">₺0 / sn</div>
+          <div class="stats" id="stats">0 araç dolduruldu</div>
         </header>
-
-        <section class="wellcard">
-          <h2 id="well-name">Kuyu seç</h2>
-          <p id="well-stats"></p>
-          <button id="upgrade" type="button">—</button>
-        </section>
       </div>
 
       <div id="floaters"></div>
 
+      <!-- Yakıt doldurma paneli -->
+      <div id="serve-sheet" class="sheet" hidden>
+        <div class="sheet-inner">
+          <p class="order-label">Müşterinin isteği</p>
+          <p class="order" id="order">—</p>
+
+          <p class="field-label">Yakıt türü</p>
+          <div class="chips" id="fuel-chips"></div>
+
+          <p class="field-label">Tutar</p>
+          <div class="chips" id="amount-chips"></div>
+
+          <div class="sheet-actions">
+            <button id="serve-cancel" class="ghost" type="button">Vazgeç</button>
+            <button id="serve-confirm" type="button" disabled>Doldur</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pompa açma paneli -->
+      <div id="unlock-sheet" class="sheet" hidden>
+        <div class="sheet-inner">
+          <h2 id="unlock-title">Pompa</h2>
+          <p id="unlock-text"></p>
+          <div class="sheet-actions">
+            <button id="unlock-cancel" class="ghost" type="button">Vazgeç</button>
+            <button id="unlock-confirm" type="button">Aç</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Gece vardiyası -->
       <div id="offline" class="overlay" hidden>
         <div class="dialog">
-          <h2>Sen yokken saha çalıştı</h2>
+          <h2>Gece vardiyası</h2>
           <p id="offline-text"></p>
           <button id="offline-continue" type="button">Devam</button>
         </div>

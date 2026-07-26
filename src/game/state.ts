@@ -1,21 +1,16 @@
-import { WELLS } from './wells';
-
-export const SAVE_VERSION = 1;
-
-export interface WellSave {
-  wellId: string;
-  level: number;
-}
+export const SAVE_VERSION = 2;
 
 export interface PlayerData {
   saveVersion: number;
   money: number;
   totalEarned: number;
-  prestigeCount: number;
-  prestigeMultiplier: number;
-  /** Oyunun son kapandığı an (saniye). Offline kazanç bundan hesaplanır. */
+  servedCars: number;
+  /** Sabrı taşan veya yanlış yakıt verilen araçlar. */
+  missedCars: number;
+  /** Açılmış pompaların indeksleri. */
+  unlockedSlots: number[];
+  /** Oyunun son kapandığı an (saniye). Gece vardiyası kazancı bundan hesaplanır. */
   lastSeenUnixSeconds: number;
-  wells: WellSave[];
 }
 
 export function nowUnixSeconds(): number {
@@ -23,19 +18,14 @@ export function nowUnixSeconds(): number {
 }
 
 export function createNewGame(): PlayerData {
-  const data: PlayerData = {
+  return {
     saveVersion: SAVE_VERSION,
     money: 0,
     totalEarned: 0,
-    prestigeCount: 0,
-    prestigeMultiplier: 1,
+    servedCars: 0,
+    missedCars: 0,
+    // İlk pompa bedava açık gelir.
+    unlockedSlots: [0],
     lastSeenUnixSeconds: nowUnixSeconds(),
-    wells: [],
   };
-
-  // İlk kuyu bedava ve açık gelir; oyuncu ilk saniyeden gelir görsün.
-  const first = WELLS[0];
-  if (first) data.wells.push({ wellId: first.id, level: 1 });
-
-  return data;
 }

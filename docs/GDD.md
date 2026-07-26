@@ -4,106 +4,111 @@
 
 ## Tek cümlelik özet
 
-Bir tek kuyuyla başlayıp, sondaj yapıp yükselterek dünyanın en büyük petrol imparatorluğunu kuran idle/tycoon oyunu.
+Tek pompalı küçük bir akaryakıt istasyonunu devralıp, gelen araçlara doğru yakıtı
+doğru tutarda vererek büyüten servis/tycoon oyunu.
 
 ## Hedef kitle
 
-- Idle tycoon oynayan mobil oyuncu (Idle Miner, Adventure Capitalist, Oil Tycoon kitlesi)
-- Kısa oturumlar: günde 3-6 kez, 2-5 dakika
+- Servis-yönetim oyunu oynayan mobil oyuncu (Gas Station Simulator, Idle Miner kitlesi)
+- Kısa oturumlar: günde 3-6 kez, 3-6 dakika
 - Portre mod, tek elle oynanabilir
 
 ## Temel döngü
 
 ```
-Sondaj / tıkla  →  petrol üret  →  sat, para kazan  →  yükselt
-       ↑                                                   │
-       └───────────  yeni kuyu / yeni saha aç  ←───────────┘
+Araç gelir → siparişini söyler → pompaya dokun → yakıt türü + tutar seç
+     ↑                                                      │
+     │                                                  doldur
+     │                                                      ↓
+     └──────── yeni pompa aç ←── para ←── ödeme ────────────┘
 ```
 
-1. Oyuncu kuyuya dokunarak veya otomatik pompayla petrol üretir.
-2. Petrol depoya dolar; depo dolunca üretim durur (yükseltme baskısı).
-3. Petrol satılır → para.
-4. Parayla: kuyu seviyesi, pompa hızı, depo kapasitesi, nakliye hızı yükseltilir.
-5. Yeterli sermaye birikince yeni saha açılır.
+1. Araç istasyona girer, boş bir pompanın yanına yanaşır.
+2. Kafasının üstünde siparişi belirir: **"₺300 Benzin"**.
+3. Oyuncu araca/pompaya dokunur, açılan panelden yakıt türü ve tutarı seçer.
+4. Doğru seçim → doldurma animasyonu → ödeme alınır, araç mutlu ayrılır.
+5. Yanlış yakıt veya yanlış tutar → müşteri kızar, para ödemeden gider.
+6. Sipariş verilmeden sabrı biterse yine gider (kaçan müşteri).
+7. Biriken parayla yeni pompa açılır → aynı anda daha çok araca bakılır.
 
-## İlerleme / sahalar
+**Oyunun zorluğu zamanlama.** Tek pompayla rahat; 4-6 pompa açıkken aynı anda
+birden çok sipariş yetiştirmek gerekir.
 
-Her saha bir "bölüm"; yeni saha açmak ana ilerleme hissi.
+## Yakıt türleri
 
-| # | Saha | Tema |
-|---|---|---|
-| 1 | Batman | Başlangıç, tek kuyu, toprak yol, traktör |
-| 2 | Adıyaman | İlk rafineri, kamyon nakliyesi |
-| 3 | Trakya | Doğalgaz mekaniği eklenir |
-| 4 | Basra Körfezi | Ölçek büyür, boru hattı |
-| 5 | Kuzey Denizi | Deniz platformu, hava koşulu olayları |
-| 6 | Teksas | Rakip şirketler, borsa mekaniği |
-| 7 | Sibirya | Donma / bakım mekaniği |
-| 8 | Derin Deniz | Geç oyun, çok yüksek çarpanlar |
-
-Türkiye'den başlamak yerel pazarda güçlü bir bağ kuruyor; Batman gerçekten Türkiye'nin petrol şehri.
-
-## Üretim zinciri
-
-Basit tutulacak, katman katman açılacak:
-
-```
-Kuyu → Depo → Nakliye (kamyon/boru/tanker) → Rafineri → Satış
-```
-
-- **v0.1**: sadece Kuyu → Para (zincir yok)
-- **v0.2**: Depo kapasitesi + nakliye darboğazı
-- **v0.3**: Rafineri (ham petrol → benzin, daha yüksek fiyat)
-
-## Yükseltmeler
-
-| Tür | Etki |
+| Tür | Renk |
 |---|---|
-| Kuyu seviyesi | Varil/saniye artar |
-| Pompa | Üretim çarpanı |
-| Depo | Kapasite (offline birikim için kritik) |
-| Nakliye | Satış hızı |
-| Yönetici | Otomasyon — o kuyuyu elle dokunmadan çalıştırır |
+| Dizel | Yeşil |
+| Benzin | Kırmızı |
+| LPG | Mavi |
 
-Maliyet formülü: `cost = baseCost * costGrowth ^ level`, `costGrowth ≈ 1.15`.
+Tutarlar sabit seçeneklerden: **₺100 / ₺200 / ₺300 / ₺500**. Müşterinin isteyebileceği
+küme ile oyuncunun seçebileceği küme birebir aynı — yoksa eşleşmesi imkânsız sipariş
+üretilir.
 
-## Prestij — "Sahayı Sat"
+## Pompalar ve ilerleme
 
-Oyuncu tüm imparatorluğu satıp sıfırdan başlar; karşılığında kalıcı çarpan kazanır.
+6 pompa, sol/sağ ikili sıralar halinde. İlki bedava açık gelir.
 
-- Para birimi: **Hisse** (kalıcı)
-- Formül taslağı: `hisse = floor(sqrt(toplamKazanç / 1e12))`
-- Her hisse kalıcı **+%2 gelir**
-- İlk prestij ~2-3 saatlik oyunda erişilebilir olmalı, yoksa oyuncu döngüyü hiç görmez.
+| Pompa | Maliyet |
+|---|---|
+| 1 | bedava |
+| 2 | ₺2.500 |
+| 3 | ₺7.000 |
+| 4 | ₺18.000 |
+| 5 | ₺45.000 |
+| 6 | ₺110.000 |
 
-## Offline kazanç
+Araç ~5,5 saniyede bir gelir ve **boş pompa yoksa hiç gelmez** — yani pompa sayısı
+doğrudan kapasite demek. Kuyruk mekaniği bilerek v0.1'e alınmadı (bkz. Açık sorular).
 
-- Baz: **4 saat** (yükseltme + reklamla uzatılır)
-- Offline verim: aktif gelirin **%50**'si (aktif oynamayı ödüllendirmek için)
-- Dönüşte "Yokken 3sa 12dk'da ₺4.2M kazandın" ekranı → 2x için reklam butonu
+## Zamanlama değerleri
+
+| Değer | Süre |
+|---|---|
+| Müşteri sabrı | 24 sn |
+| Yanaşma | 2,4 sn |
+| Doldurma | 2,6 sn |
+| Ayrılma | 2,2 sn |
+
+## Gece vardiyası (offline)
+
+Oyun kapalıyken pompa başına saniyede ₺2, en fazla 4 saat. Aktif oynanan bir oyun
+olduğu için bilerek düşük tutuldu — amaç geri dönüşü ödüllendirmek, oynamamayı değil.
+
+## Sonraki katmanlar (v0.2+)
+
+- **Kuyruk:** pompalar doluyken araçlar sıraya girer, sabır daha hızlı erir
+- **Market:** ödeme sırasında ek satış (kahve, sigara) → sipariş başına ekstra kâr
+- **Personel:** bir pompayı otomatik çalıştıran görevli
+- **Yakıt stoğu:** depo bitince tanker çağırma
+- **Farklı araç tipleri:** kamyon (büyük tutar, uzun doldurma), motosiklet (küçük, hızlı)
 
 ## Monetizasyon
 
 Reklam ağırlıklı, IAP destekli. Agresif değil.
 
-- **Ödüllü reklam** (ana kaynak): 2x gelir 4 saat / offline kazancı ikiye katla / anlık nakit
-- **Geçiş reklamı**: sadece saha değişiminde, seyrek
-- **IAP**: reklamsız (₺149), başlangıç paketi, hisse paketleri
+- **Ödüllü reklam:** 2x kazanç 4 saat / gece vardiyasını ikiye katla / anlık nakit
+- **Geçiş reklamı:** sadece pompa açılışlarında, seyrek
+- **IAP:** reklamsız, başlangıç paketi
 - Kesinlikle yok: enerji/can sistemi, ilerlemeyi bloklayan paywall
 
 ## Sanat yönü
 
-- 2D, sıcak ve biraz karikatürize; kirli/endüstriyel değil
-- Palet: kum sarısı + petrol siyahı + turkuaz (UI vurgu)
-- Sayılar büyüdükçe ekran daha "zengin" görünmeli: traktör → kamyon → tanker → helikopter
+- Kuş bakışı, ortografik kamera (~60° eğim) — tüm pompalar eşit kolaylıkta seçilebilir
+- Sade, biraz karikatürize; kirli/fotogerçekçi değil
+- Palet: asfalt grisi + beton + yakıt renkleri (yeşil/kırmızı/mavi) + turkuaz UI vurgusu
+- İstasyon büyüdükçe ekran daha "dolu" görünmeli: daha çok pompa, daha çok araç
 
 ## Ses
 
-- Ritmik pompa sesi (oyunun imzası olabilir)
-- Para sesi her satışta, pitch kazanca göre yükselir
+- Pompa çalışma sesi, dolum bitince "klik"
+- Kasa sesi her ödemede
+- Kızgın müşteri kornası — kaçırmanın bedeli duyulsun
 
 ## Açık sorular
 
-- [ ] Tıklama mı tamamen idle mi? (öneri: erken oyunda tıklama, sonra otomasyon)
-- [ ] Online özellik olacak mı? (lider tablosu / klan) — v1'de hayır
-- [ ] Petrol fiyatı dalgalanacak mı? (borsa mekaniği eğlenceli ama karmaşıklık katıyor)
+- [ ] Kuyruk olmalı mı, yoksa "boş pompa yoksa araç gelmez" yeterli mi?
+- [ ] Yanlış yakıt cezası çok mu sert? (şu an: hiç para yok)
+- [ ] Tutar seçimi sabit butonlar mı kalsın, yoksa kaydırma çubuğu mu?
+- [ ] Yakıt fiyatı dalgalansın mı? (gerçekçi ama karmaşıklık katıyor)

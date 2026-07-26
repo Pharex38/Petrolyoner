@@ -1,17 +1,23 @@
 # Petrolyoner
 
-Petrol sahibi simülasyonu / idle tycoon oyunu. Kuş bakışı 3B saha, dikey mobil ekran için.
+Akaryakıt istasyonu işletme oyunu. Gelen araçlara doğru yakıtı doğru tutarda ver,
+kazandığın parayla yeni pompa aç. Kuş bakışı 3B, dikey mobil ekran için.
 
-> **İsim geçici.** "Petrolyoner" (petrol + milyoner) çalışma adı; daha iyi bir isim bulununca değişecek.
+> **İsim geçici.** "Petrolyoner" (petrol + milyoner) çalışma adı; daha iyi bir isim
+> bulununca değişecek.
+
+## Nasıl oynanır
+
+1. Araç gelir, pompanın yanına yanaşır ve siparişini söyler: **"₺300 Benzin"**
+2. Araca dokun → yakıt türü ve tutarı seç → **Doldur**
+3. Doğruysa para kasaya girer; yanlış yakıt verirsen müşteri kızıp gider
+4. Sabrı biterse de gider — çubuk kırmızıya dönünce acele et
+5. Parayla yeni pompa aç, aynı anda daha çok araca bak
 
 ## Teknoloji
 
 - **Three.js** (WebGL) + **TypeScript** + **Vite**
 - Hedef: mobil tarayıcı (dikey), sonrasında Capacitor ile iOS/Android mağaza paketi
-
-> Proje başlangıçta Unity ile kurulmuştu; `21abe9b` commit'inde Unity sürümü duruyor.
-> Three.js'e geçildi çünkü iterasyon çok daha hızlı (build yok, kaydet-yenile) ve
-> bu oyun türü ağırlıklı olarak UI + basit geometri.
 
 ## Çalıştırma
 
@@ -35,36 +41,42 @@ Tarayıcıda `http://localhost:5173`. Aynı ağdaki telefondan test için termin
 ```
 src/
   game/          Motordan bağımsız oyun mantığı — Three.js'i hiç bilmez
-    wells.ts     Kuyu tanımları ve denge değerleri (ayar burada)
-    economy.ts   GameEngine: gelir, yükseltme, offline kazanç, tick
-    save.ts      localStorage kayıt/yükleme, bozuk kayıt kurtarma
+    fuel.ts      Yakıt türleri ve tutar seçenekleri
+    slots.ts     Pompa yerleşimi ve açma maliyetleri
+    station.ts   Station: araç akışı, servis, pompa açma, gece vardiyası
+    save.ts      localStorage kayıt/yükleme, bozuk kayıt kurtarma, şema taşıma
     state.ts     Kayıt veri modeli
     format.ts    K/M/B/T sayı biçimlendirme
   scene/         3B görsel katman
     world.ts     Sahne, ortografik kuş bakışı kamera, ışık, zemin, raycast
-    pumpjack.ts  Kuyu modeli ve pompa animasyonu
+    models.ts    Pompa adası, araç ve istasyon binası modelleri
   ui/hud.ts      DOM arayüzü (sahne üstünde katman)
   main.ts        Bağlayıcı: giriş, ana döngü, yaşam döngüsü
 docs/            Tasarım dokümanları
 ```
 
 **Önemli ayrım:** `src/game/` içindeki hiçbir dosya Three.js import etmez. Görsel katman
-tamamen değişse bile oyun mantığı aynı kalır — nitekim Unity'den geçerken bu dosyalar
-neredeyse birebir taşındı.
+tamamen değişse bile oyun mantığı aynı kalır.
 
 ## Denge ayarı
 
-Tüm sayılar [src/game/wells.ts](src/game/wells.ts) içinde. Dev sunucusunda tarayıcı
-konsolundan deneme yapabilirsiniz:
+Sayılar [src/game/slots.ts](src/game/slots.ts) (pompa maliyetleri),
+[src/game/fuel.ts](src/game/fuel.ts) (yakıt ve tutarlar) ve
+[src/game/station.ts](src/game/station.ts) (süreler, sabır, gece vardiyası) içinde.
+
+Dev sunucusunda tarayıcı konsolundan:
 
 ```js
-__petrolyoner.engine.addMoney(1e6)   // para ekle
-__petrolyoner.offline(3)             // 3 saatlik offline ekranını dene
-__petrolyoner.reset()                // kaydı sil, baştan başla
-__petrolyoner.engine.data.wells      // seviyeleri gör
+__petrolyoner.station.addMoney(1e5)   // para ekle
+__petrolyoner.step(10)                // zamanı 10 saniye ilerlet
+__petrolyoner.offline(3)              // 3 saatlik gece vardiyası ekranı
+__petrolyoner.reset()                 // kaydı sil, baştan başla
+__petrolyoner.station.cars            // sahadaki araçlar
 ```
 
-Bu kanca sadece `npm run dev` sırasında var, production build'e girmez.
+`step()` özellikle işe yarar: sekme arka plandayken tarayıcı
+`requestAnimationFrame`'i durdurur, bu yüzden otomatik testte oyun bununla sürülür.
+Bu kancaların tamamı sadece `npm run dev` sırasında var, production build'e girmez.
 
 ## Dokümanlar
 
@@ -74,6 +86,7 @@ Bu kanca sadece `npm run dev` sırasında var, production build'e girmez.
 ## Kurallar
 
 - Oyun mantığına Three.js sızdırma; `src/game/` saf TypeScript kalsın.
-- Para/üretim değerleri için `formatMoney()` kullan, ham sayı basma.
-- Kuyuların `id` alanı kayıt dosyasına yazılıyor — yayına çıktıktan sonra değiştirme.
+- Para için `formatMoney()` kullan, ham sayı basma.
+- Müşterinin isteyebileceği tutarlar ile oyuncunun seçebileceği tutarlar aynı küme
+  olmalı (`AMOUNT_OPTIONS`) — yoksa eşleşmesi imkânsız sipariş üretilir.
 - Keystore, imza sertifikası, `.env` asla commitlenmez.

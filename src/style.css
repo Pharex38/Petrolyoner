@@ -3,7 +3,9 @@
 :root {
   --accent: #27b7a8;
   --accent-dim: #1c7d73;
+  --danger: #d9534f;
   --panel: rgba(14, 16, 20, 0.9);
+  --sheet: #171a20;
   --text: #f5f2ec;
   --text-dim: #a8aeb6;
   --disabled: #4a4f57;
@@ -48,74 +50,222 @@ body {
   height: 100%;
 }
 
-/* --- HUD --- */
+/* --- Üst bilgi --- */
 
 #hud {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   padding: calc(var(--safe-top) + 12px) 12px calc(var(--safe-bottom) + 12px);
-  /* Dokunuşlar varsayılan olarak sahaya geçsin; sadece panel yakalasın. */
   pointer-events: none;
 }
 
 .topbar {
   background: var(--panel);
   border-radius: 16px;
-  padding: 12px 16px;
+  padding: 10px 16px;
   text-align: center;
   backdrop-filter: blur(8px);
 }
 
 .money {
-  font-size: clamp(28px, 8vw, 44px);
+  font-size: clamp(26px, 7.5vw, 40px);
   font-weight: 700;
-  line-height: 1.1;
+  line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
 
-.income {
+.stats {
   margin-top: 2px;
-  font-size: clamp(14px, 3.6vw, 18px);
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
-}
-
-.wellcard {
-  pointer-events: auto;
-  background: var(--panel);
-  border-radius: 20px;
-  padding: 16px;
-  text-align: center;
-  backdrop-filter: blur(8px);
-}
-
-.wellcard h2 {
-  margin: 0;
-  font-size: clamp(18px, 5vw, 24px);
-}
-
-.wellcard p {
-  margin: 6px 0 14px;
-  font-size: clamp(13px, 3.4vw, 16px);
+  font-size: clamp(12px, 3.2vw, 15px);
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
 
-button {
-  width: 100%;
-  padding: 16px;
-  border: 0;
-  border-radius: 14px;
+/* --- Araba üstündeki sipariş etiketleri --- */
+
+#car-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.car-label {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  background: rgba(14, 16, 20, 0.92);
+  border-radius: 10px;
+  padding: 5px 9px 6px;
+  min-width: 92px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
+}
+
+.car-label .fuel-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: baseline;
+}
+
+.car-label .patience {
+  margin-top: 5px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+
+.car-label .patience > i {
+  display: block;
+  height: 100%;
   background: var(--accent);
-  color: #06211f;
-  font-size: clamp(15px, 4.2vw, 19px);
+  transition: width 0.15s linear;
+}
+
+.car-label.urgent .patience > i {
+  background: var(--danger);
+}
+
+.car-label.filling {
+  background: rgba(20, 70, 64, 0.94);
+}
+
+/* --- Alt paneller --- */
+
+.sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 12px;
+  padding-bottom: calc(var(--safe-bottom) + 12px);
+  /* Panel açıkken istasyon görünmeye devam etsin: tam ekran kaplamıyor. */
+  pointer-events: none;
+}
+
+.sheet[hidden] {
+  display: none;
+}
+
+.sheet-inner {
+  pointer-events: auto;
+  background: var(--sheet);
+  border-radius: 22px;
+  padding: 18px 16px 16px;
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.5);
+  animation: sheet-up 0.18s ease-out;
+}
+
+@keyframes sheet-up {
+  from {
+    translate: 0 24px;
+    opacity: 0;
+  }
+  to {
+    translate: 0 0;
+    opacity: 1;
+  }
+}
+
+.order-label,
+.field-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.field-label {
+  margin-top: 14px;
+}
+
+.order {
+  margin: 0;
+  font-size: clamp(20px, 5.6vw, 26px);
+  font-weight: 700;
+}
+
+.sheet-inner h2 {
+  margin: 0 0 8px;
+  font-size: clamp(18px, 5vw, 22px);
+}
+
+.sheet-inner > p:not(.order-label):not(.field-label):not(.order) {
+  margin: 0 0 16px;
+  font-size: clamp(14px, 3.8vw, 16px);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* --- Seçim çipleri --- */
+
+.chips {
+  display: flex;
+  gap: 8px;
+}
+
+.chip {
+  flex: 1;
+  padding: 13px 4px;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  background: #23272e;
+  color: var(--text);
+  font-size: clamp(13px, 3.6vw, 16px);
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
   font-variant-numeric: tabular-nums;
+}
+
+.chip[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: #1d3a38;
+}
+
+.chip .fuel-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+/* --- Butonlar --- */
+
+.sheet-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+button {
+  flex: 1;
+  padding: 15px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--accent);
+  color: #06211f;
+  font-size: clamp(15px, 4.2vw, 18px);
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+button.ghost {
+  flex: 0 0 34%;
+  background: #2a2f36;
+  color: var(--text-dim);
 }
 
 button:disabled {
@@ -125,11 +275,10 @@ button:disabled {
 }
 
 button:not(:disabled):active {
-  background: var(--accent-dim);
   transform: translateY(1px);
 }
 
-/* --- Uçuşan kazanç yazıları --- */
+/* --- Uçuşan yazılar --- */
 
 #floaters {
   position: absolute;
@@ -144,9 +293,13 @@ button:not(:disabled):active {
   font-size: clamp(16px, 4.5vw, 22px);
   font-weight: 700;
   color: #fff;
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.65);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
   white-space: nowrap;
   animation: float-up 0.9s ease-out forwards;
+}
+
+.floater.bad {
+  color: #ff8a85;
 }
 
 @keyframes float-up {
@@ -160,7 +313,7 @@ button:not(:disabled):active {
   }
 }
 
-/* --- Offline ekranı --- */
+/* --- Tam ekran diyalog (gece vardiyası) --- */
 
 .overlay {
   position: absolute;
@@ -178,7 +331,7 @@ button:not(:disabled):active {
 
 .dialog {
   width: min(420px, 100%);
-  background: #171a20;
+  background: var(--sheet);
   border-radius: 22px;
   padding: 28px 24px 24px;
   text-align: center;

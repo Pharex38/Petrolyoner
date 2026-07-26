@@ -2,41 +2,43 @@
 
 ## v0.1 — Oynanabilir çekirdek ✅
 
-Amaç: temel döngünün eğlenceli olup olmadığını anlamak. Grafik placeholder.
+Amaç: servis döngüsünün eğlenceli olup olmadığını anlamak. Grafik placeholder.
 
-- [x] Repo + proje iskeleti
-- [x] Kuş bakışı 3B saha (ortografik kamera, 4 kuyu, yollar)
-- [x] Pompa animasyonu — seviye arttıkça hızlanır
-- [x] Kuyuya dokun → seç + bir saniyelik üretim ödülü
-- [x] Yükseltme butonu ve maliyet eğrisi (×1.14–1.17)
-- [x] Sayı biçimlendirme (K/M/B/T ve sonrası)
-- [x] localStorage kayıt / yükleme, bozuk kayıt kurtarma
-- [x] Offline kazanç (4 saat tavan, %50 verim) ve dönüş ekranı
-- [x] Dev konsol kancası (denge denemesi için)
+- [x] Kuş bakışı 3B istasyon (ortografik kamera, 6 pompa yeri, şerit, bina)
+- [x] Araç akışı: giriş → pompaya yanaşma → bekleme → doldurma → çıkış
+- [x] Sipariş etiketi (yakıt rengi + tutar) ve sabır çubuğu
+- [x] Yakıt türü + tutar seçme paneli
+- [x] Doğru servis → ödeme; yanlış yakıt/tutar → müşteri kızgın ayrılır
+- [x] Sabır bitince müşteri kaçar
+- [x] Pompa açma ve maliyetleri
+- [x] localStorage kayıt, bozuk kayıt kurtarma, v1'den şema taşıma
+- [x] Gece vardiyası (offline kazanç)
+- [x] Dev konsol kancası (denge denemesi ve zamanı elle ilerletme)
 
-**Karar noktası:** Bu haliyle 10 dakika oynanıyor mu? Oynanmıyorsa döngüyü değiştir,
-grafiğe geçme.
+**Karar noktası:** Bu haliyle 10 dakika oynanıyor mu?
 
 Bilinen eksikler:
-- Kamera sabit — kaydırma/yakınlaştırma yok
 - Ses yok
-- 4 kuyu dolduktan sonra yapacak bir şey kalmıyor (prestij yok)
+- Kamera sabit — kaydırma/yakınlaştırma yok
+- 6 pompa dolduktan sonra yapacak bir şey kalmıyor
+- Doldurma paneli açıkken alt sıradaki pompalar panelin altında kalıyor
 
 ## v0.2 — Derinlik
 
-- [ ] Depo kapasitesi + dolma darboğazı
-- [ ] Nakliye katmanı (kamyon animasyonu — kuş bakışında çok iyi durur)
-- [ ] Yönetici / otomasyon
-- [ ] İkinci saha (Adıyaman) ve saha geçişi
-- [ ] Prestij ("Sahayı Sat")
+- [ ] Kuyruk: pompalar doluyken araçlar sıraya girsin
+- [ ] Market: ödeme sırasında ek satış
+- [ ] Personel: bir pompayı otomatik çalıştıran görevli
+- [ ] Yakıt stoğu ve tanker çağırma
+- [ ] Farklı araç tipleri (kamyon, motosiklet)
+- [ ] Zorluk eğrisi: pompa sayısı arttıkça araç sıklığı artsın
 
 ## v0.3 — Cila ve his
 
 - [ ] Sanat geçişi: primitif geometriden glTF modellere
 - [ ] Ses + titreşim (Vibration API)
-- [ ] Partikül, sayı uçuşma, kamera sarsıntısı
+- [ ] Dolum hortumu animasyonu, kasa efekti, kızgın müşteri kornası
 - [ ] Onboarding / ilk 60 saniye
-- [ ] Performans: mobilde 60 fps, gölge maliyeti ölçülecek
+- [ ] Performans: mobilde 60 fps ölçümü
 
 ## v0.4 — Mobil paket ve para
 
@@ -49,7 +51,7 @@ Bilinen eksikler:
 
 ## v1.0 — Yayın
 
-- [ ] 8 saha, tam ekonomi dengesi
+- [ ] Tam ekonomi dengesi
 - [ ] Lokalizasyon: TR + EN
 - [ ] Store görselleri, ikon, tanıtım videosu
 - [ ] Kapalı test (Play internal testing, TestFlight)
@@ -61,10 +63,11 @@ Bilinen eksikler:
 - [ ] Bundle identifier son hali (isim değişirse burası da değişir)
 - [ ] iOS: ATT prompt, App Privacy formu
 - [ ] Android: Data safety formu, hedef API seviyesi
-- [ ] İlk prestije ulaşma süresi ölçüldü
 
 ## Notlar
 
 - İsim geçici (`Petrolyoner`). Değişirse: repo adı, `package.json`, bundle id, store listing.
-- Erken aşamada grafiğe zaman harcama; idle oyunlarda ilk risk **ekonomi dengesi**, sanat değil.
-- Bundle şu an ~135 kB gzip (çoğu Three.js). Mobilde ilk açılış süresi v0.3'te ölçülmeli.
+- Erken aşamada grafiğe zaman harcama; ilk risk **zamanlama dengesi**, sanat değil.
+- Bundle ~135 kB gzip (çoğu Three.js). Mobilde ilk açılış süresi v0.3'te ölçülmeli.
+- Proje geçmişi: `21abe9b` Unity petrol sahası, `82c2033` Three.js petrol sahası.
+  İstasyon konseptine bu commit'te geçildi; ekonomi/kayıt/biçimlendirme katmanı taşındı.

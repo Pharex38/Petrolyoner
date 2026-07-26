@@ -1,10 +1,10 @@
-import type { PlayerData, WellSave } from './state';
+import type { PlayerData } from './state';
 import { SAVE_VERSION, createNewGame } from './state';
 
 const STORAGE_KEY = 'petrolyoner.save';
 
 /**
- * Kayıt localStorage'da tutuluyor. Tarayıcı kayıtları temizlenirse ilerleme
+ * Kayıt localStorage'da tutuluyor. Tarayıcı verileri temizlenirse ilerleme
  * gider — bulut kaydı v0.4'te (hesap sistemiyle birlikte) gelecek.
  */
 export function loadGame(): PlayerData | null {
@@ -21,8 +21,7 @@ export function loadGame(): PlayerData | null {
   if (raw === null) return null;
 
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    const data = migrate(parsed);
+    const data = migrate(JSON.parse(raw) as unknown);
 
     if (data === null) {
       console.error('[save] Kayıt bozuk, yedeklenip sıfırlanıyor.');
@@ -54,36 +53,41 @@ export function clearSave(): void {
   }
 }
 
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
 /**
  * Eski sürüm kayıtlarını güncel şemaya taşır ve gelen verinin şeklini doğrular.
- * Alan eklerken SAVE_VERSION'ı artır ve buraya bir adım ekle.
+ *
+ * v1 petrol sahası sürümüydü (wells alanı vardı). İstasyon oyununa geçerken
+ * kuyu seviyelerinin karşılığı yok; parayı koruyup pompaları sıfırlıyoruz.
  */
 function migrate(input: unknown): PlayerData | null {
   if (typeof input !== 'object' || input === null) return null;
 
-  const raw = input as Partial<PlayerData>;
-  if (typeof raw.money !== 'number' || !Array.isArray(raw.wells)) return null;
+  const raw = input as Record<string, unknown>;
+  if (typeof raw.money !== 'number') return null;
 
   const fallback = createNewGame();
 
-  const wells = raw.wells
-    .filter((well): well is WellSave =>
-      typeof well === 'object' &&
-      well !== null &&
-      typeof (well as WellSave).wellId === 'string' &&
-      Number.isFinite((well as WellSave).level))
-    .map((well) => ({ wellId: well.wellId, level: Math.max(0, Math.floor(well.level)) }));
+  const unlocked = Array.isArray(raw.unlockedSlots)
+    ? raw.unlockedSlots
+        .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+        .map((value) => Math.max(0, Math.floor(value)))
+    : [];
+
+  // İlk pompa her zaman açık olmalı, yoksa oyun oynanamaz hale gelir.
+  if (!unlocked.includes(0)) unlocked.push(0);
 
   return {
     saveVersion: SAVE_VERSION,
-    money: Number.isFinite(raw.money) ? raw.money : 0,
-    totalEarned: Number.isFinite(raw.totalEarned) ? (raw.totalEarned as number) : 0,
-    prestigeCount: Number.isFinite(raw.prestigeCount) ? (raw.prestigeCount as number) : 0,
-    prestigeMultiplier: Number.isFinite(raw.prestigeMultiplier) ? (raw.prestigeMultiplier as number) : 1,
-    lastSeenUnixSeconds: Number.isFinite(raw.lastSeenUnixSeconds)
-      ? (raw.lastSeenUnixSeconds as number)
-      : fallback.lastSeenUnixSeconds,
-    wells: wells.length > 0 ? wells : fallback.wells,
+    money: numberOr(raw.money, 0),
+    totalEarned: numberOr(raw.totalEarned, 0),
+    servedCars: numberOr(raw.servedCars, 0),
+    missedCars: numberOr(raw.missedCars, 0),
+    unlockedSlots: [...new Set(unlocked)].sort((a, b) => a - b),
+    lastSeenUnixSeconds: numberOr(raw.lastSeenUnixSeconds, fallback.lastSeenUnixSeconds),
   };
 }
 
