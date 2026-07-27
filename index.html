@@ -21,26 +21,68 @@
           <div class="money" id="money">₺0</div>
           <div class="stats" id="stats">0 araç dolduruldu</div>
         </header>
+
+        <div id="management-alert" class="management-alert" hidden>
+          <i aria-hidden="true"></i>
+          <span>
+            <strong id="management-alert-title">Olay</strong>
+            <small id="management-alert-detail"></small>
+          </span>
+        </div>
+
+        <aside class="stock-panel" aria-label="Yakıt depoları">
+          <div class="stock-heading">
+            <span>Depolar</span>
+            <small id="stock-message">İkmal için bara dokun</small>
+          </div>
+          <div id="stock-bars" class="stock-bars"></div>
+        </aside>
+
+        <div class="time-chip" aria-label="Oyun saati">
+          <span id="day-icon" aria-hidden="true">☀</span>
+          <span id="game-clock">08:00</span>
+        </div>
+
+        <button id="market-build" class="market-build" type="button">
+          <span aria-hidden="true">▦</span>
+          <span id="market-build-label">Market kur</span>
+        </button>
+
+        <button id="price-manage" class="price-manage" type="button">
+          <span aria-hidden="true">₺</span>
+          <span>Fiyatlar</span>
+        </button>
+
+        <button id="management-open" class="management-open" type="button">
+          <span aria-hidden="true">⚖</span>
+          <span>Yönetim</span>
+        </button>
       </div>
 
       <div id="floaters"></div>
 
       <!-- Yakıt doldurma paneli -->
       <div id="serve-sheet" class="sheet" hidden>
-        <div class="sheet-inner">
-          <p class="order-label">Müşterinin isteği</p>
-          <p class="order" id="order">—</p>
-
-          <p class="field-label">Yakıt türü</p>
-          <div class="chips" id="fuel-chips"></div>
-
-          <p class="field-label">Tutar</p>
-          <div class="chips" id="amount-chips"></div>
-
-          <div class="sheet-actions">
-            <button id="serve-cancel" class="ghost" type="button">Vazgeç</button>
-            <button id="serve-confirm" type="button" disabled>Doldur</button>
+        <div class="sheet-inner fuel-sheet">
+          <div class="order-row">
+            <div>
+              <p class="order-label">Müşterinin isteği</p>
+              <p class="order" id="order">—</p>
+            </div>
+            <button id="serve-cancel" class="close-button" type="button" aria-label="Yakıt panelini kapat">×</button>
           </div>
+
+          <div class="fill-console" id="fill-console">
+            <div class="fill-readout" id="fill-readout">₺0</div>
+            <div class="fill-track" aria-hidden="true">
+              <div class="fill-liquid" id="fill-liquid"></div>
+              <div class="fill-target" id="fill-target"></div>
+            </div>
+            <p class="fill-hint" id="fill-hint">Doğru nozula basılı tut, hedefte bırak</p>
+          </div>
+
+          <p class="field-label nozzle-label">Nozulu seç ve basılı tut</p>
+          <div class="nozzles" id="fuel-nozzles"></div>
         </div>
       </div>
 
@@ -53,6 +95,73 @@
             <button id="unlock-cancel" class="ghost" type="button">Vazgeç</button>
             <button id="unlock-confirm" type="button">Aç</button>
           </div>
+        </div>
+      </div>
+
+      <!-- Market ve akaryakıt fiyat yönetimi -->
+      <div id="pricing-sheet" class="sheet" hidden>
+        <div class="sheet-inner pricing-sheet-inner">
+          <div class="pricing-header">
+            <div>
+              <p class="order-label">İstasyon yönetimi</p>
+              <h2>Fiyatları belirle</h2>
+            </div>
+            <button
+              id="pricing-close"
+              class="close-button"
+              type="button"
+              aria-label="Fiyat panelini kapat"
+            >×</button>
+          </div>
+
+          <p id="pricing-note" class="pricing-note">
+            Yüksek fiyat daha çok kazandırır ama müşteriyi ve market satışını azaltır.
+          </p>
+
+          <section class="pricing-section" aria-labelledby="fuel-pricing-title">
+            <h3 id="fuel-pricing-title">Akaryakıt · litre</h3>
+            <div id="fuel-price-list" class="price-list"></div>
+          </section>
+
+          <section
+            id="market-pricing-section"
+            class="pricing-section"
+            aria-labelledby="market-pricing-title"
+          >
+            <h3 id="market-pricing-title">Market ürünleri</h3>
+            <div id="market-price-list" class="price-list"></div>
+          </section>
+        </div>
+      </div>
+
+      <!-- Şirket, personel, rakip ve küresel ekonomi yönetimi -->
+      <div id="management-sheet" class="sheet management-sheet" hidden>
+        <div class="sheet-inner management-sheet-inner">
+          <div class="management-header">
+            <div>
+              <p class="order-label">Petrolyoner Holding</p>
+              <h2>Şirket yönetimi</h2>
+            </div>
+            <button
+              id="management-close"
+              class="close-button"
+              type="button"
+              aria-label="Yönetim panelini kapat"
+            >×</button>
+          </div>
+
+          <nav class="management-tabs" aria-label="Yönetim bölümleri" role="tablist">
+            <button type="button" data-management-tab="overview" role="tab">Özet</button>
+            <button type="button" data-management-tab="environment" role="tab">Çevre</button>
+            <button type="button" data-management-tab="workers" role="tab">İşçiler</button>
+            <button type="button" data-management-tab="rivals" role="tab">Rakipler</button>
+            <button type="button" data-management-tab="economy" role="tab">Ekonomi</button>
+          </nav>
+
+          <p id="management-feedback" class="management-feedback">
+            Kararların talep, risk ve üretimi doğrudan etkiler.
+          </p>
+          <div id="management-body" class="management-body"></div>
         </div>
       </div>
 

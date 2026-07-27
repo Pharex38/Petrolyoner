@@ -1,5 +1,19 @@
 import type { PlayerData } from './state';
 import { SAVE_VERSION, createNewGame } from './state';
+import {
+  FUEL_CAPACITY_LITERS,
+  FUELS,
+  clampFuelPrice,
+  type FuelPrices,
+  type PendingFuelRestocks,
+  type FuelStock,
+} from './fuel';
+import { normalizeManagementState } from './management';
+import {
+  MARKET_ITEMS,
+  clampMarketPrice,
+  type MarketPrices,
+} from './market';
 
 const STORAGE_KEY = 'petrolyoner.save';
 
@@ -80,6 +94,60 @@ function migrate(input: unknown): PlayerData | null {
   // İlk pompa her zaman açık olmalı, yoksa oyun oynanamaz hale gelir.
   if (!unlocked.includes(0)) unlocked.push(0);
 
+  const rawFuelStock =
+    typeof raw.fuelStock === 'object' && raw.fuelStock !== null
+      ? raw.fuelStock as Record<string, unknown>
+      : {};
+  const fuelStock = { ...fallback.fuelStock } as FuelStock;
+  for (const fuel of FUELS) {
+    fuelStock[fuel.id] = Math.max(
+      0,
+      Math.min(
+        FUEL_CAPACITY_LITERS,
+        numberOr(rawFuelStock[fuel.id], fallback.fuelStock[fuel.id]),
+      ),
+    );
+  }
+
+  const rawPendingRestocks =
+    typeof raw.pendingFuelRestocks === 'object' && raw.pendingFuelRestocks !== null
+      ? raw.pendingFuelRestocks as Record<string, unknown>
+      : {};
+  const pendingFuelRestocks: PendingFuelRestocks = {};
+  for (const fuel of FUELS) {
+    const liters = numberOr(rawPendingRestocks[fuel.id], 0);
+    if (liters > 0) {
+      pendingFuelRestocks[fuel.id] = Math.min(
+        FUEL_CAPACITY_LITERS,
+        liters,
+      );
+    }
+  }
+
+  const rawFuelPrices =
+    typeof raw.fuelPrices === 'object' && raw.fuelPrices !== null
+      ? raw.fuelPrices as Record<string, unknown>
+      : {};
+  const fuelPrices = { ...fallback.fuelPrices } as FuelPrices;
+  for (const fuel of FUELS) {
+    fuelPrices[fuel.id] = clampFuelPrice(
+      fuel.id,
+      numberOr(rawFuelPrices[fuel.id], fallback.fuelPrices[fuel.id]),
+    );
+  }
+
+  const rawMarketPrices =
+    typeof raw.marketPrices === 'object' && raw.marketPrices !== null
+      ? raw.marketPrices as Record<string, unknown>
+      : {};
+  const marketPrices = { ...fallback.marketPrices } as MarketPrices;
+  for (const item of MARKET_ITEMS) {
+    marketPrices[item.id] = clampMarketPrice(
+      item.id,
+      numberOr(rawMarketPrices[item.id], fallback.marketPrices[item.id]),
+    );
+  }
+
   return {
     saveVersion: SAVE_VERSION,
     money: numberOr(raw.money, 0),
@@ -87,6 +155,13 @@ function migrate(input: unknown): PlayerData | null {
     servedCars: numberOr(raw.servedCars, 0),
     missedCars: numberOr(raw.missedCars, 0),
     unlockedSlots: [...new Set(unlocked)].sort((a, b) => a - b),
+    marketBuilt: raw.marketBuilt === true,
+    fuelStock,
+    fuelPrices,
+    pendingFuelRestocks,
+    marketPrices,
+    marketSales: Math.max(0, Math.floor(numberOr(raw.marketSales, 0))),
+    management: normalizeManagementState(raw.management),
     lastSeenUnixSeconds: numberOr(raw.lastSeenUnixSeconds, fallback.lastSeenUnixSeconds),
   };
 }

@@ -15,22 +15,31 @@ export interface SlotDefinition {
   readonly unlockCost: number;
 }
 
-const LEFT_PUMP_X = -2.9;
-const RIGHT_PUMP_X = 2.9;
-const LEFT_CAR_X = -1.5;
-const RIGHT_CAR_X = 1.5;
+/*
+ * Orta koridor ile park cepleri arasında bir araç genişliğinden fazla açıklık
+ * bırakıyoruz. Böylece arkadaki pompaya giden araç, öndeki müşterinin gövdesini
+ * kesmeden merkez koridorda ilerleyebiliyor.
+ */
+const LEFT_PUMP_X = -4.45;
+const RIGHT_PUMP_X = 4.45;
+const LEFT_CAR_X = -2.75;
+const RIGHT_CAR_X = 2.75;
 
 export const SLOTS: readonly SlotDefinition[] = [
-  { index: 0, pumpX: LEFT_PUMP_X, carX: LEFT_CAR_X, z: 3.6, unlockCost: 0 },
-  { index: 1, pumpX: RIGHT_PUMP_X, carX: RIGHT_CAR_X, z: 3.6, unlockCost: 2500 },
-  { index: 2, pumpX: LEFT_PUMP_X, carX: LEFT_CAR_X, z: 0.2, unlockCost: 7000 },
-  { index: 3, pumpX: RIGHT_PUMP_X, carX: RIGHT_CAR_X, z: 0.2, unlockCost: 18000 },
-  { index: 4, pumpX: LEFT_PUMP_X, carX: LEFT_CAR_X, z: -3.2, unlockCost: 45000 },
-  { index: 5, pumpX: RIGHT_PUMP_X, carX: RIGHT_CAR_X, z: -3.2, unlockCost: 110000 },
+  { index: 0, pumpX: LEFT_PUMP_X, carX: LEFT_CAR_X, z: 4.4, unlockCost: 0 },
+  { index: 1, pumpX: RIGHT_PUMP_X, carX: RIGHT_CAR_X, z: 4.4, unlockCost: 2500 },
+  { index: 2, pumpX: LEFT_PUMP_X, carX: LEFT_CAR_X, z: 0, unlockCost: 7000 },
+  { index: 3, pumpX: RIGHT_PUMP_X, carX: RIGHT_CAR_X, z: 0, unlockCost: 18000 },
+  { index: 4, pumpX: LEFT_PUMP_X, carX: LEFT_CAR_X, z: -4.4, unlockCost: 45000 },
+  { index: 5, pumpX: RIGHT_PUMP_X, carX: RIGHT_CAR_X, z: -4.4, unlockCost: 110000 },
 ];
 
 /** Müşteri araçlarının ana yoldan istasyon şeridine döndüğü kavşak. */
-export const ENTRY_Z = 10;
+export const ENTRY_Z = 11.5;
+/** Servisi biten araçların ayrı bir kapıdan ana yola katıldığı kavşak. */
+export const EXIT_Z = -9.2;
+/** Sonradan kurulabilen marketin ve başlangıç şantiyesinin merkez noktası. */
+export const MARKET_Z = -13.2;
 export const LANE_X = 0;
 
 export function findSlot(index: number): SlotDefinition | undefined {

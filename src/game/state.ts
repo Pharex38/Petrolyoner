@@ -1,4 +1,17 @@
-export const SAVE_VERSION = 2;
+import {
+  createInitialFuelPrices,
+  createInitialFuelStock,
+  type FuelPrices,
+  type PendingFuelRestocks,
+  type FuelStock,
+} from './fuel';
+import {
+  createInitialManagementState,
+  type ManagementState,
+} from './management';
+import { createInitialMarketPrices, type MarketPrices } from './market';
+
+export const SAVE_VERSION = 6;
 
 export interface PlayerData {
   saveVersion: number;
@@ -9,6 +22,20 @@ export interface PlayerData {
   missedCars: number;
   /** Açılmış pompaların indeksleri. */
   unlockedSlots: number[];
+  /** Market başlangıçta yoktur; oyuncu kazancıyla sonradan inşa edilir. */
+  marketBuilt: boolean;
+  /** Yeraltı tanklarında kalan litre; her servis ve offline vardiya tüketir. */
+  fuelStock: FuelStock;
+  /** Oyuncunun ayarladığı litre satış fiyatları. */
+  fuelPrices: FuelPrices;
+  /** Ücreti ödenmiş fakat tanker boşaltmayı bitirmemiş yakıtlar. */
+  pendingFuelRestocks: PendingFuelRestocks;
+  /** Market raf fiyatları; market kurulmadan da kayıt şemasında hazır tutulur. */
+  marketPrices: MarketPrices;
+  /** Market kasasından geçen toplam ürün sayısı. */
+  marketSales: number;
+  /** Şirket yönetimi, personel, rakipler, hukuk ve ham petrol ekonomisi. */
+  management: ManagementState;
   /** Oyunun son kapandığı an (saniye). Gece vardiyası kazancı bundan hesaplanır. */
   lastSeenUnixSeconds: number;
 }
@@ -26,6 +53,13 @@ export function createNewGame(): PlayerData {
     missedCars: 0,
     // İlk pompa bedava açık gelir.
     unlockedSlots: [0],
+    marketBuilt: false,
+    fuelStock: createInitialFuelStock(),
+    fuelPrices: createInitialFuelPrices(),
+    pendingFuelRestocks: {},
+    marketPrices: createInitialMarketPrices(),
+    marketSales: 0,
+    management: createInitialManagementState(),
     lastSeenUnixSeconds: nowUnixSeconds(),
   };
 }

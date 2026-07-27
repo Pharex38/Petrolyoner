@@ -1,14 +1,23 @@
 import * as THREE from 'three';
+import { findFuel, type FuelType } from '../game/fuel';
 import type { Car } from '../game/station';
 import type { SlotDefinition } from '../game/slots';
-import { ENTRY_Z, LANE_X, SLOTS, findSlot } from '../game/slots';
+import { ENTRY_Z, EXIT_Z, LANE_X, MARKET_Z, SLOTS, findSlot } from '../game/slots';
+import { AmbientSystem } from './ambient';
 import {
   PumpIsland,
   createCar,
+  createFuelTanker,
   createStationBuilding,
+  setCarBassPulse,
   setCarEmergencyLights,
   setCarHazards,
   setCarHeadlights,
+  setCarLightBeamsEnabled,
+  setCarRunningLights,
+  setCarTurnSignal,
+  setFuelTankerUnloading,
+  setTowPlatformUnload,
   type VehicleStyle,
 } from './models';
 
@@ -24,15 +33,17 @@ const ROAD_COLOR = 0x2c3139;
 const LINE_COLOR = 0xd9d5c8;
 const ROAD_LINE_COLOR = 0xf0d27d;
 const CURB_COLOR = 0xb9bbb4;
-const SKY_COLOR = 0x8fb4cc;
+const SKY_COLOR = 0x9fc7dc;
+const NIGHT_SKY_COLOR = 0x101a2d;
+const DAY_CYCLE_SECONDS = 180;
 
 /** Sağdaki ana yolu da gösterecek, dikey ekrana göre ayarlanmış referans genişlik. */
-const TARGET_WIDTH = 10.4;
+const TARGET_WIDTH = 14.1;
 /** Yatay ekranda derinlik sığsın diye referans yükseklik. */
-const TARGET_HEIGHT = 15;
+const TARGET_HEIGHT = 17.5;
 
 /** İstasyonun sağındaki, NPC'lerin kullandığı ana yol. */
-const ROAD_X = 5.45;
+const ROAD_X = 7.75;
 const ROAD_WIDTH = 3.4;
 const ROAD_LENGTH = 140;
 const ROAD_CENTER_Z = -1;
@@ -54,11 +65,25 @@ const CAT_BRAKE_DISTANCE = 8;
 const CAT_SPAWN_CLEARANCE = 8;
 const CAT_PASS_CLEARANCE = 0.45;
 const FOLLOWER_FLASH_HEADWAY = 9;
+/** İstasyon rotasındaki araçları ana yol trafiğinin algıladığı yatay mesafe. */
+const STATION_CAR_REACTION_WIDTH = 2.15;
 /** Acil araçlar görünür yol kesitini baştan başa, orta koridordan geçer. */
 const EMERGENCY_ROUTE_LIMIT = 28;
 const EMERGENCY_YIELD_DISTANCE = 16;
 const EMERGENCY_STOP_DISTANCE = 6.5;
 const EMERGENCY_SHOULDER_INSET = 0.24;
+const RESCUE_ROUTE_LIMIT = 30;
+const RESCUE_ENTRY_STOP_Z = ENTRY_Z + 2.4;
+const RESCUE_TRUCK_UNLOAD_PROGRESS = 0.8;
+const RESCUE_UNLOAD_SECONDS = 2.2;
+const RESCUE_RELEASE_EXIT_PROGRESS = 0.42;
+const FUEL_TANKER_ROUTE_LIMIT = 31;
+const FUEL_TANKER_ENTRY_STOP_Z = ENTRY_Z + 2.75;
+const FUEL_TANKER_BAY_X = 4.75;
+const FUEL_TANKER_BAY_Z = 15.2;
+const FUEL_TANKER_UNLOAD_SECONDS = 6.2;
+const FUEL_TANKER_ROUTE_RELEASE_PROGRESS = 0.82;
+const ACTIVE_HEADLIGHT_RANGE_Z = 21;
 
 type TrafficDirection = -1 | 1;
 
@@ -86,7 +111,7 @@ interface TrafficSeed {
   readonly style: VehicleStyle;
 }
 
-type TrafficEventKind = 'bass' | 'overtake' | 'breakdown';
+type TrafficEventKind = 'bass' | 'overtake' | 'breakdown' | 'horn' | 'swerve' | 'rush';
 
 interface TrafficEvent {
   readonly kind: TrafficEventKind;
@@ -95,6 +120,9 @@ interface TrafficEvent {
   readonly originX?: number;
   readonly targetX?: number;
   readonly effect?: THREE.Group;
+  towTruck?: THREE.Group;
+  towAttached?: boolean;
+  towComplete?: boolean;
 }
 
 interface CatEvent {
@@ -110,6 +138,49 @@ interface EmergencyVehicle {
   readonly speed: number;
   elapsed: number;
 }
+
+type RescueDeliveryPhase = 'road' | 'waiting' | 'entering' | 'unloading' | 'departing';
+
+interface RescueDelivery {
+  readonly truck: THREE.Group;
+  readonly car: THREE.Group;
+  readonly color: number;
+  readonly speed: number;
+  z: number;
+  delivered: boolean;
+  phase: RescueDeliveryPhase;
+  progress: number;
+  elapsed: number;
+  customer: Car | null;
+  exitRoute: THREE.CatmullRomCurve3 | null;
+  unloadStart: CarTransform | null;
+  customerReleased: boolean;
+}
+
+type FuelDeliveryPhase = 'road' | 'waiting' | 'entering' | 'unloading' | 'departing';
+
+interface FuelDelivery {
+  readonly truck: THREE.Group;
+  readonly fuel: FuelType;
+  readonly speed: number;
+  phase: FuelDeliveryPhase;
+  z: number;
+  progress: number;
+  elapsed: number;
+  completed: boolean;
+  entryRoute: THREE.CatmullRomCurve3 | null;
+  exitRoute: THREE.CatmullRomCurve3 | null;
+}
+
+export type WorldPick =
+  | {
+      readonly slotIndex: number;
+      readonly kind: 'car' | 'pump';
+    }
+  | {
+      readonly slotIndex: null;
+      readonly kind: 'market';
+    };
 
 const TRAFFIC_SEEDS: readonly TrafficSeed[] = [
   { laneX: INBOUND_TRAFFIC_X, z: 18, direction: -1, speed: 3.5, color: 0xdf5a4d, style: 'compact' },
@@ -157,7 +228,8 @@ function vehicleStyleOf(mesh: THREE.Group): VehicleStyle {
     style === 'executive' ||
     style === 'sport' ||
     style === 'classic' ||
-    style === 'convertible'
+    style === 'convertible' ||
+    style === 'tow'
   ) {
     return style;
   }
@@ -181,18 +253,59 @@ export class World {
 
   /** Ana yoldaki bir araç girişe geldiğinde oyun motoru uygun müşteriyi döndürür. */
   onTrafficCarAtEntrance: ((color: number) => Car | null) | null = null;
+  /** Web Audio katmanı World'den ayrı kalsın diye korna yalnızca olay olarak yayınlanır. */
+  onTrafficHorn: (() => void) | null = null;
+  /** Bass aracının müziği, olay başladığı ve bittiği karede ses katmanına bildirilir. */
+  onBassMusic: ((active: boolean) => void) | null = null;
+  /** Çekicinin getirdiği deposu boş araç için normal trafikten ayrı müşteri girişi. */
+  onFuelRescueAtEntrance: ((color: number) => Car | null) | null = null;
+  /** Çekici aracı doğrudan pompa cebine indirdiğinde oyun motoruna haber verir. */
+  onRescueCarDelivered: ((car: Car) => void) | null = null;
+  /** Tanker hortumu boşaltmayı bitirdiğinde stok oyun motorunda açılır. */
+  onFuelDeliveryComplete: ((fuel: FuelType) => void) | null = null;
+  /** Polis/ambulans sahneye girdiği ve çıktığı karede siren sesini eşitler. */
+  onEmergencySiren: ((active: boolean) => void) | null = null;
 
   private readonly container: HTMLElement;
+  private readonly daySkyColor = new THREE.Color(SKY_COLOR);
+  private readonly nightSkyColor = new THREE.Color(NIGHT_SKY_COLOR);
+  private readonly rainSkyColor = new THREE.Color(0x647582);
+  private readonly hemisphereLight = new THREE.HemisphereLight(0xdce9f5, 0x5a5f66, 1.6);
+  private readonly sunLight = new THREE.DirectionalLight(0xfff3dd, 2.1);
+  private readonly stationNightLights: THREE.PointLight[] = [];
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
+  private readonly projectionScratch = new THREE.Vector3();
   private readonly pickables: THREE.Object3D[] = [];
   private readonly carMeshes = new Map<number, THREE.Group>();
+  private readonly aliveCarIds = new Set<number>();
   private readonly trafficCars: TrafficCar[] = [];
   private readonly isMobileDevice = window.matchMedia('(pointer: coarse)').matches;
+  private readonly reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  private readonly ambient: AmbientSystem;
+  private readonly protestGroup = createProtestGroup();
+  private readonly storageTankSite = createStorageTankSite();
   private catEvent: CatEvent | null = null;
   private emergencyVehicle: EmergencyVehicle | null = null;
+  private rescueDelivery: RescueDelivery | null = null;
+  private fuelDelivery: FuelDelivery | null = null;
+  private stationRouteOwnerId: number | null = null;
+  private marketBuilding: THREE.Group | null = null;
+  private marketConstructionSite: THREE.Group | null = null;
+  private marketBuildProgress = 1;
+  private visibleStorageLevel = -1;
+  private marketNightLight: THREE.PointLight | null = null;
   private nextTrafficEventIn = randomBetween(4.5, 8.5);
   private nextEmergencyVehicleIn = randomBetween(9, 15);
+  private nextRescueDeliveryIn = randomBetween(20, 32);
+  private lightBudgetTimer = 0;
+  private daylightVisualTimer = 0;
+  private viewportWidth = 0;
+  private viewportHeight = 0;
+  private elapsedWorldTime = 0;
+  /** 0=00:00, 0.5=12:00. Oyun sabah vardiyasında başlar. */
+  private dayPhase = 8 / 24;
+  private nightTime = false;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -207,25 +320,43 @@ export class World {
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     // Trafik varken mobil GPU'da gereksiz yüksek çözünürlüklü render yapma.
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.isMobileDevice ? 1.5 : 2));
+    this.renderer.setPixelRatio(
+      Math.min(window.devicePixelRatio, this.isMobileDevice ? 1.25 : 1.75),
+    );
     this.renderer.shadowMap.enabled = true;
     // r185'te PCFSoftShadowMap kullanımdan kaldırıldı; PCF zaten yumuşatıyor.
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.08;
     container.appendChild(this.renderer.domElement);
+
+    this.ambient = new AmbientSystem(
+      ROAD_X,
+      ROAD_WIDTH,
+      this.isMobileDevice,
+      this.reduceMotion,
+    );
+    this.scene.add(this.ambient.group);
 
     this.addLights();
     this.addGround();
-    this.scene.add(createStationBuilding());
     this.addIslands();
     this.addTraffic();
+    this.protestGroup.position.set(-6.2, 0.08, 8.6);
+    this.protestGroup.visible = false;
+    this.scene.add(this.protestGroup);
+    this.storageTankSite.position.set(-6.75, 0.07, -6.6);
+    this.storageTankSite.visible = false;
+    this.scene.add(this.storageTankSite);
 
     this.resize();
   }
 
   private addLights(): void {
-    this.scene.add(new THREE.HemisphereLight(0xdce9f5, 0x5a5f66, 1.6));
+    this.scene.add(this.hemisphereLight);
 
-    const sun = new THREE.DirectionalLight(0xfff3dd, 2.1);
+    const sun = this.sunLight;
     sun.position.set(6, 14, 6);
     sun.castShadow = true;
     sun.shadow.mapSize.set(this.isMobileDevice ? 512 : 1024, this.isMobileDevice ? 512 : 1024);
@@ -241,6 +372,110 @@ export class World {
     shadowCamera.updateProjectionMatrix();
 
     this.scene.add(sun);
+
+    // Pompa çevresindeki lambalar yalnızca geceleri güçlenir.
+    for (const [x, z] of [[-2.3, 1.8], [2.3, 1.8]] as const) {
+      const light = new THREE.PointLight(0xffd99a, 0, 9, 1.7);
+      light.position.set(x, 3.1, z);
+      light.castShadow = false;
+      this.stationNightLights.push(light);
+      this.scene.add(light);
+    }
+
+    const marketLight = new THREE.PointLight(0xffd99a, 0, 9, 1.7);
+    marketLight.position.set(0, 3.1, -11.8);
+    marketLight.castShadow = false;
+    this.marketNightLight = marketLight;
+    this.stationNightLights.push(marketLight);
+    this.scene.add(marketLight);
+  }
+
+  /**
+   * Market yeni oyunda yoktur. Satın alınınca temelden yukarı doğru kısa,
+   * kesintisiz bir inşa hareketiyle sahneye gelir.
+   */
+  setMarketBuilt(built: boolean, animate = false): void {
+    if (!built) {
+      if (this.marketConstructionSite !== null) {
+        this.marketConstructionSite.visible = true;
+      }
+      if (this.marketBuilding !== null) {
+        const pickableIndex = this.pickables.indexOf(this.marketBuilding);
+        if (pickableIndex >= 0) this.pickables.splice(pickableIndex, 1);
+        this.scene.remove(this.marketBuilding);
+        disposeEffect(this.marketBuilding);
+        this.marketBuilding = null;
+      }
+      this.marketBuildProgress = 0;
+      if (this.marketNightLight !== null) this.marketNightLight.visible = false;
+      return;
+    }
+    if (this.marketConstructionSite !== null) {
+      this.marketConstructionSite.visible = false;
+    }
+    if (this.marketBuilding !== null) return;
+
+    const building = createStationBuilding();
+    const shouldAnimate = animate && !this.reduceMotion;
+    this.marketBuildProgress = shouldAnimate ? 0 : 1;
+    const scaleY = shouldAnimate ? 0.025 : 1;
+    building.scale.set(1, scaleY, 1);
+    building.userData.pickKind = 'market';
+    this.marketBuilding = building;
+    this.scene.add(building);
+    this.pickables.push(building);
+    if (this.marketNightLight !== null) this.marketNightLight.visible = true;
+  }
+
+  private updateMarketConstruction(deltaSeconds: number): void {
+    const building = this.marketBuilding;
+    if (building === null || this.marketBuildProgress >= 1) return;
+    this.marketBuildProgress = Math.min(1, this.marketBuildProgress + deltaSeconds / 0.82);
+    building.scale.y = lerp(0.025, 1, smooth(this.marketBuildProgress));
+  }
+
+  get clockLabel(): string {
+    const totalMinutes = Math.floor(this.dayPhase * 24 * 60) % (24 * 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  }
+
+  get isNightTime(): boolean {
+    return this.nightTime;
+  }
+
+  get weatherIcon(): string {
+    if (this.ambient.isRaining) return '☂';
+    return this.nightTime ? '☾' : '☀';
+  }
+
+  get isFuelDeliveryActive(): boolean {
+    return this.fuelDelivery !== null;
+  }
+
+  /** Çevre/kaçakçılık tepkisini sahada görünür protestoculara çevirir. */
+  setProtestActive(active: boolean): void {
+    this.protestGroup.visible = active;
+  }
+
+  /** Yönetimde kurulan devasa depoları sahada kalıcı tanklara dönüştürür. */
+  setStorageLevel(level: number): void {
+    const normalized = Math.max(0, Math.min(8, Math.floor(level)));
+    if (normalized === this.visibleStorageLevel) return;
+    this.visibleStorageLevel = normalized;
+    this.storageTankSite.visible = normalized > 0;
+    const visibleTanks = Math.ceil(normalized / 2);
+    for (const [index, tank] of this.storageTankSite.children.entries()) {
+      tank.visible = index < visibleTanks;
+    }
+  }
+
+  /** Geliştirme ve denge kontrolü için oyun saatini doğrudan ayarlar. */
+  setTimeOfDay(hour: number): void {
+    const normalizedHour = ((hour % 24) + 24) % 24;
+    this.dayPhase = normalizedHour / 24;
+    this.updateDayNight(0);
   }
 
   private addGround(): void {
@@ -256,8 +491,8 @@ export class World {
     // İstasyon betonu ekranın altına ve üstüne taşar; kamera döndüğünde arazi
     // veya otoparkın keskin bir bitişi görünmez.
     const lot = new THREE.Mesh(
-      new THREE.BoxGeometry(7.4, 0.06, 120),
-      new THREE.MeshStandardMaterial({ color: LOT_COLOR, roughness: 1 }),
+      new THREE.BoxGeometry(12, 0.06, 120),
+      new THREE.MeshStandardMaterial({ color: LOT_COLOR, roughness: 0.94 }),
     );
     lot.position.set(0, 0.03, -1);
     lot.receiveShadow = true;
@@ -266,7 +501,7 @@ export class World {
     const lineMaterial = new THREE.MeshStandardMaterial({ color: LINE_COLOR, roughness: 0.9 });
 
     // Sürüş şeridinin kenar çizgileri.
-    for (const lineX of [-0.82, 0.82]) {
+    for (const lineX of [-1.18, 1.18]) {
       const line = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.02, 108), lineMaterial);
       line.position.set(lineX, 0.07, -1);
       this.scene.add(line);
@@ -281,7 +516,54 @@ export class World {
       }
     }
 
+    // Düz beton plaka yerine, market kurulana kadar okunabilir bir şantiye.
+    const constructionSite = createMarketConstructionSite();
+    constructionSite.position.set(0, 0, MARKET_Z);
+    this.marketConstructionSite = constructionSite;
+    this.scene.add(constructionSite);
+
+    this.addFuelDepotManifold();
     this.addRoad();
+  }
+
+  /** Tankerin bağlandığı üç renkli yeraltı tank dolum ağzı. */
+  private addFuelDepotManifold(): void {
+    const group = new THREE.Group();
+    group.position.set(5.42, 0, FUEL_TANKER_BAY_Z);
+
+    const base = new THREE.Mesh(
+      new THREE.BoxGeometry(0.78, 0.1, 2.2),
+      new THREE.MeshStandardMaterial({ color: 0x85837c, roughness: 0.94 }),
+    );
+    base.position.y = 0.07;
+    base.receiveShadow = true;
+    group.add(base);
+
+    for (const [index, fuel] of (['dizel', 'benzin', 'lpg'] as const).entries()) {
+      const info = findFuel(fuel);
+      const cap = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.17, 0.2, 0.13, 10),
+        new THREE.MeshStandardMaterial({
+          color: info.color,
+          emissive: info.color,
+          emissiveIntensity: 0.22,
+          roughness: 0.58,
+          metalness: 0.3,
+        }),
+      );
+      cap.position.set(0, 0.19, (index - 1) * 0.62);
+      cap.castShadow = true;
+      group.add(cap);
+    }
+
+    const guard = new THREE.Mesh(
+      new THREE.BoxGeometry(0.08, 0.62, 2.35),
+      new THREE.MeshStandardMaterial({ color: 0xd2a13d, roughness: 0.7 }),
+    );
+    guard.position.set(0.46, 0.34, 0);
+    guard.castShadow = true;
+    group.add(guard);
+    this.scene.add(group);
   }
 
   /** İstasyonun sağına iki şeritli, kesik çizgili ana yol ekler. */
@@ -295,13 +577,29 @@ export class World {
     road.receiveShadow = true;
     this.scene.add(road);
 
-    // Yolun iki kenarındaki kaldırım şeritleri, asfaltın zeminden ayrışmasını sağlar.
-    for (const xOffset of [-ROAD_WIDTH / 2, ROAD_WIDTH / 2]) {
-      const curb = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, ROAD_LENGTH), curbMaterial);
-      curb.position.set(ROAD_X + xOffset, 0.06, ROAD_CENTER_Z);
+    const addCurbSegment = (x: number, startZ: number, endZ: number): void => {
+      const length = endZ - startZ;
+      if (length <= 0) return;
+      const curb = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, length), curbMaterial);
+      curb.position.set(x, 0.06, (startZ + endZ) / 2);
       curb.receiveShadow = true;
       this.scene.add(curb);
-    }
+    };
+
+    // İstasyon tarafındaki kaldırım giriş ve çıkışta kesilir; üstüne kalın bir
+    // beton parça bindirmek yerine yol ve saha aynı seviyede birleşir.
+    const roadStartZ = ROAD_CENTER_Z - ROAD_LENGTH / 2;
+    const roadEndZ = ROAD_CENTER_Z + ROAD_LENGTH / 2;
+    const gateHalfWidth = 1.02;
+    const stationCurbX = ROAD_X - ROAD_WIDTH / 2;
+    addCurbSegment(stationCurbX, roadStartZ, EXIT_Z - gateHalfWidth);
+    addCurbSegment(
+      stationCurbX,
+      EXIT_Z + gateHalfWidth,
+      ENTRY_Z - gateHalfWidth,
+    );
+    addCurbSegment(stationCurbX, ENTRY_Z + gateHalfWidth, roadEndZ);
+    addCurbSegment(ROAD_X + ROAD_WIDTH / 2, roadStartZ, roadEndZ);
 
     // Ortadaki kesik sarı çizgi: araçların çift yönlü aktığı ilk bakışta anlaşılır.
     for (let z = ROAD_CENTER_Z - ROAD_LENGTH / 2 + 1.4; z < ROAD_CENTER_Z + ROAD_LENGTH / 2; z += 3.2) {
@@ -310,12 +608,24 @@ export class World {
       this.scene.add(stripe);
     }
 
+    // Aynı boğazı paylaşmayan iki ayrı, zemine gömülü kapı işareti.
+    const drivewayLineMaterial = new THREE.MeshStandardMaterial({ color: LINE_COLOR, roughness: 0.85 });
+    for (const z of [ENTRY_Z, EXIT_Z]) {
+      const gateLine = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.025, 0.08), drivewayLineMaterial);
+      gateLine.position.set(
+        ROAD_X - ROAD_WIDTH / 2 - 0.55,
+        0.08,
+        z + (z === ENTRY_Z ? -0.54 : 0.54),
+      );
+      this.scene.add(gateLine);
+    }
+
     this.addRoadsideBushes();
   }
 
   /** Kedi olayının okunabilmesi için yol kenarında birkaç çalı ekler. */
   private addRoadsideBushes(): void {
-    for (const z of [-18, -9, -2, 6, 14, 23]) {
+    for (const z of [-18, -15, -2, 6, 14, 23]) {
       const leftBush = createBush();
       leftBush.position.set(CAT_START_X - 0.28, 0.1, z);
       this.scene.add(leftBush);
@@ -365,6 +675,9 @@ export class World {
     mesh.rotation.y = direction === -1 ? 0 : Math.PI;
     mesh.userData.trafficColor = color;
     mesh.userData.vehicleStyle = style;
+    setCarRunningLights(mesh, this.nightTime);
+    setCarLightBeamsEnabled(mesh, false);
+    setCarTurnSignal(mesh, null, false);
 
     this.trafficCars.push({
       mesh,
@@ -408,6 +721,32 @@ export class World {
     return position;
   }
 
+  /** Tanker gibi uzun bir aracı mevcut özel araçların arkasında güvenle başlatır. */
+  private findClearInboundLongVehiclePosition(preferredZ: number): number {
+    let position = preferredZ;
+    const minimumGap = MIN_TRAFFIC_GAP * 1.8;
+    for (let attempt = 0; attempt < 18; attempt += 1) {
+      const trafficClear = this.trafficCars.every(
+        (trafficCar) =>
+          trafficCar.direction !== -1 ||
+          trafficCar.laneX !== INBOUND_TRAFFIC_X ||
+          Math.abs(trafficCar.mesh.position.z - position) >= minimumGap,
+      );
+      const specialMeshes = [
+        this.rescueDelivery?.truck,
+        this.emergencyVehicle?.mesh,
+      ].filter((mesh): mesh is THREE.Group => mesh !== undefined);
+      const specialClear = specialMeshes.every(
+        (mesh) =>
+          Math.abs(mesh.position.x - INBOUND_TRAFFIC_X) > 1.25 ||
+          Math.abs(mesh.position.z - position) >= minimumGap,
+      );
+      if (trafficClear && specialClear) return position;
+      position += minimumGap;
+    }
+    return position;
+  }
+
   /** Trafikteki mesh'i yeni oluşan müşteriyle eşleştirir; yeni mesh yaratılmaz. */
   private transferTrafficCarToCustomer(trafficCar: TrafficCar, customer: Car): void {
     const trafficIndex = this.trafficCars.indexOf(trafficCar);
@@ -416,6 +755,8 @@ export class World {
     const mesh = trafficCar.mesh;
     mesh.position.z = ENTRY_Z;
     mesh.userData.slotIndex = customer.slotIndex;
+    mesh.userData.pickKind = 'car';
+    setCarTurnSignal(mesh, 'right', true);
     this.carMeshes.set(customer.id, mesh);
     this.pickables.push(mesh);
   }
@@ -427,20 +768,185 @@ export class World {
 
     const color = typeof mesh.userData.trafficColor === 'number' ? mesh.userData.trafficColor : 0xe8e6e1;
     delete mesh.userData.slotIndex;
+    delete mesh.userData.pickKind;
+    setCarTurnSignal(mesh, null, false);
     this.registerTrafficCar(
       mesh,
       1,
       OUTBOUND_TRAFFIC_X,
-      ENTRY_Z,
+      EXIT_Z,
       randomBetween(3.35, 4.25),
       color,
       vehicleStyleOf(mesh),
     );
   }
 
+  private rescueBlocksStationRoutes(): boolean {
+    const delivery = this.rescueDelivery;
+    if (
+      delivery === null ||
+      delivery.phase === 'road' ||
+      delivery.phase === 'waiting'
+    ) {
+      return false;
+    }
+    return delivery.phase !== 'departing' || delivery.progress < RESCUE_RELEASE_EXIT_PROGRESS;
+  }
+
+  private fuelDeliveryBlocksStationRoutes(): boolean {
+    const delivery = this.fuelDelivery;
+    if (delivery === null || delivery.phase === 'road') return false;
+    return (
+      delivery.phase !== 'departing' ||
+      delivery.progress < FUEL_TANKER_ROUTE_RELEASE_PROGRESS
+    );
+  }
+
+  private refreshStationRouteOwner(cars: readonly Car[]): void {
+    if (this.stationRouteOwnerId === null) return;
+    const owner = cars.find((car) => car.id === this.stationRouteOwnerId);
+    if (
+      owner !== undefined &&
+      (owner.phase === 'arriving' || owner.phase === 'leaving')
+    ) {
+      return;
+    }
+    this.stationRouteOwnerId = null;
+  }
+
+  /**
+   * İstasyon içindeki ortak koridora yalnızca bir hareketli araç rezervasyon
+   * alabilir. Yol birleşiminde ayrıca gerçek araç gövdeleriyle çakışma aranır.
+   */
+  canAdvanceStationCar(
+    car: Car,
+    nextProgress: number,
+    cars: Iterable<Car>,
+  ): boolean {
+    const carList = [...cars];
+    this.refreshStationRouteOwner(carList);
+
+    if (this.rescueBlocksStationRoutes() || this.fuelDeliveryBlocksStationRoutes()) {
+      return false;
+    }
+    if (car.phase === 'leaving' && this.emergencyVehicle !== null) return false;
+
+    if (this.stationRouteOwnerId === null) {
+      const candidates = carList
+        .filter(
+          (candidate) =>
+            !candidate.deliveryPending &&
+            (
+              candidate.phase === 'arriving' ||
+              (candidate.phase === 'leaving' && this.emergencyVehicle === null)
+            ),
+        )
+        .sort((a, b) => {
+          if (a.phase !== b.phase) return a.phase === 'leaving' ? -1 : 1;
+          if (a.progress !== b.progress) return b.progress - a.progress;
+          return a.id - b.id;
+        });
+      this.stationRouteOwnerId = candidates[0]?.id ?? null;
+    }
+    if (this.stationRouteOwnerId !== car.id) return false;
+
+    const slot = findSlot(car.slotIndex);
+    if (slot === undefined) return false;
+    const proposed = carTransformAt(car, slot, nextProgress);
+
+    for (const other of carList) {
+      if (other.id === car.id) continue;
+      const otherSlot = findSlot(other.slotIndex);
+      if (otherSlot === undefined) continue;
+      const mesh = this.carMeshes.get(other.id);
+      const occupied = mesh === undefined
+        ? carTransform(other, otherSlot)
+        : {
+            x: mesh.position.x,
+            z: mesh.position.z,
+            rotation: mesh.rotation.y,
+          };
+      if (vehicleBodiesOverlap(proposed, occupied, 0.12)) return false;
+    }
+
+    // Ayrı çıkış kapısına yaklaşan araç, ana yoldaki gerçek boşluğu görmeden
+    // ilerlemez. Böylece yola katılırken bir NPC'nin üzerine ışınlanmaz.
+    if (car.phase === 'leaving' && nextProgress > 0.56) {
+      for (const trafficCar of this.trafficCars) {
+        const occupied = {
+          x: trafficCar.mesh.position.x,
+          z: trafficCar.mesh.position.z,
+          rotation: trafficCar.mesh.rotation.y,
+        };
+        if (vehicleBodiesOverlap(proposed, occupied, 0.38)) return false;
+
+        const towTruck = trafficCar.event?.towTruck;
+        if (
+          towTruck !== undefined &&
+          vehicleBodiesOverlap(
+            proposed,
+            { x: towTruck.position.x, z: towTruck.position.z, rotation: towTruck.rotation.y },
+            0.38,
+          )
+        ) {
+          return false;
+        }
+      }
+
+      const rescue = this.rescueDelivery;
+      if (
+        rescue !== null &&
+        (
+          vehicleBodiesOverlap(
+            proposed,
+            {
+              x: rescue.truck.position.x,
+              z: rescue.truck.position.z,
+              rotation: rescue.truck.rotation.y,
+            },
+            0.45,
+          ) ||
+          (
+            !rescue.delivered &&
+            vehicleBodiesOverlap(
+              proposed,
+              {
+                x: rescue.car.position.x,
+                z: rescue.car.position.z,
+                rotation: rescue.car.rotation.y,
+              },
+              0.32,
+            )
+          )
+        )
+      ) {
+        return false;
+      }
+
+      const fuelTruck = this.fuelDelivery?.truck;
+      if (
+        fuelTruck !== undefined &&
+        vehicleBodiesOverlap(
+          proposed,
+          {
+            x: fuelTruck.position.x,
+            z: fuelTruck.position.z,
+            rotation: fuelTruck.rotation.y,
+          },
+          0.55,
+        )
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   private addIslands(): void {
     for (const slot of SLOTS) {
       const island = new PumpIsland(slot.index, slot.pumpX, slot.z);
+      island.group.userData.pickKind = 'pump';
       this.islands.set(slot.index, island);
       this.scene.add(island.group);
       this.pickables.push(island.group);
@@ -449,12 +955,15 @@ export class World {
 
   /** Motordaki arabalarla sahnedeki mesh'leri eşitler. */
   syncCars(cars: Iterable<Car>): void {
-    const alive = new Set<number>();
+    const carList = [...cars];
+    this.refreshStationRouteOwner(carList);
+    const alive = this.aliveCarIds;
+    alive.clear();
 
     // Bir önceki karede dolan hortumu kapat; aktif dolum aşağıda yeniden açılır.
     for (const island of this.islands.values()) island.setFueling(null);
 
-    for (const car of cars) {
+    for (const car of carList) {
       alive.add(car.id);
 
       let mesh = this.carMeshes.get(car.id);
@@ -465,6 +974,9 @@ export class World {
         mesh.scale.setScalar(TRAFFIC_CAR_SCALE);
         mesh.userData.trafficColor = car.color;
         mesh.userData.slotIndex = car.slotIndex;
+        mesh.userData.pickKind = 'car';
+        setCarRunningLights(mesh, this.nightTime);
+        setCarLightBeamsEnabled(mesh, false);
         this.carMeshes.set(car.id, mesh);
         this.scene.add(mesh);
         this.pickables.push(mesh);
@@ -473,9 +985,24 @@ export class World {
       const slot = findSlot(car.slotIndex);
       if (slot === undefined) continue;
 
+      if (car.deliveryPending) {
+        const signalPulse = Math.floor(this.elapsedWorldTime * 2.4) % 2 === 0;
+        setCarTurnSignal(mesh, 'right', signalPulse);
+        continue;
+      }
+
       const transform = carTransform(car, slot);
       mesh.position.set(transform.x, VEHICLE_Y, transform.z);
       mesh.rotation.y = transform.rotation;
+
+      const signalPulse = Math.floor(this.elapsedWorldTime * 2.4) % 2 === 0;
+      if (car.phase === 'arriving') {
+        setCarTurnSignal(mesh, 'right', signalPulse);
+      } else if (car.phase === 'leaving') {
+        setCarTurnSignal(mesh, 'left', signalPulse);
+      } else {
+        setCarTurnSignal(mesh, null, false);
+      }
 
       if (car.phase === 'filling') {
         this.islands.get(car.slotIndex)?.setFueling(car.fuel, car.fillProgress);
@@ -495,8 +1022,22 @@ export class World {
    * veya yavaşlar; öndeki araca yaklaşınca takip mesafesini korur.
    */
   updateTraffic(deltaSeconds: number): void {
+    this.ambient.update(deltaSeconds);
+    this.updateDayNight(deltaSeconds);
+    this.updateMarketConstruction(deltaSeconds);
+    this.updateProtest();
     this.updateCatEvent(deltaSeconds);
     this.updateEmergencyVehicle(deltaSeconds);
+    this.updateFuelDelivery(deltaSeconds);
+    this.updateRescueDelivery(deltaSeconds);
+
+    this.nextRescueDeliveryIn -= deltaSeconds;
+    if (this.nextRescueDeliveryIn <= 0) {
+      const rescueStarted = this.startRescueDelivery();
+      this.nextRescueDeliveryIn = rescueStarted
+        ? randomBetween(28, 44)
+        : randomBetween(4, 7);
+    }
 
     this.nextEmergencyVehicleIn -= deltaSeconds;
     if (this.nextEmergencyVehicleIn <= 0) {
@@ -518,6 +1059,10 @@ export class World {
       const previousX = trafficCar.mesh.position.x;
       const previousZ = trafficCar.mesh.position.z;
       const eventSpeed = this.updateTrafficEvent(trafficCar, deltaSeconds);
+      if (trafficCar.event?.kind === 'breakdown' && trafficCar.event.towComplete === true) {
+        this.completeBreakdownTow(trafficCar, trafficCar.event);
+        continue;
+      }
       const catStoppingDistance = this.catStoppingDistance(trafficCar);
       const catBrake = this.catBrakeMultiplier(catStoppingDistance);
       const emergencyBrake = this.emergencyYieldMultiplier(trafficCar, deltaSeconds);
@@ -527,10 +1072,15 @@ export class World {
         eventSpeed *
         catBrake *
         emergencyBrake *
+        this.ambient.trafficSpeedMultiplier *
         deltaSeconds;
-      const headway = trafficCar.event?.kind === 'overtake'
+      const roadTrafficHeadway = trafficCar.event?.kind === 'overtake'
         ? TRAFFIC_MAX_Z - TRAFFIC_MIN_Z
         : this.trafficHeadway(trafficCar);
+      const headway = Math.min(
+        roadTrafficHeadway,
+        this.stationCarHeadway(trafficCar),
+      );
       const distance = Math.min(
         desiredDistance,
         Math.max(0, headway - MIN_TRAFFIC_GAP),
@@ -541,6 +1091,10 @@ export class World {
       // İstasyona sadece giriş şeridinden, gerçek bir araç eriştiğinde müşteri gelir.
       if (
         this.emergencyVehicle === null &&
+        this.stationRouteOwnerId === null &&
+        !this.rescueBlocksStationRoutes() &&
+        !this.fuelDeliveryBlocksStationRoutes() &&
+        this.rescueDelivery?.phase !== 'waiting' &&
         trafficCar.event === null &&
         trafficCar.direction === -1 &&
         previousZ >= ENTRY_Z &&
@@ -554,6 +1108,7 @@ export class World {
       }
 
       trafficCar.mesh.position.z = nextZ;
+      this.syncBreakdownTowTruck(trafficCar);
       this.updateTrafficHeading(
         trafficCar,
         trafficCar.mesh.position.x - previousX,
@@ -576,6 +1131,713 @@ export class World {
         this.recycleTrafficCar(trafficCar, -1, TRAFFIC_MAX_Z);
       }
     }
+
+    this.updateVehicleLightBudget(deltaSeconds);
+  }
+
+  private updateProtest(): void {
+    if (!this.protestGroup.visible || this.reduceMotion) return;
+    for (const child of this.protestGroup.children) {
+      const offset = typeof child.userData.protestOffset === 'number'
+        ? child.userData.protestOffset
+        : 0;
+      child.rotation.z =
+        Math.sin(this.elapsedWorldTime * 2.7 + offset) * 0.035;
+    }
+  }
+
+  /** Hızlandırılmış dünya saati; ışıklar ve araç farları alacakaranlıkta devreye girer. */
+  private updateDayNight(deltaSeconds: number): void {
+    this.elapsedWorldTime += deltaSeconds;
+    this.dayPhase = (this.dayPhase + deltaSeconds / DAY_CYCLE_SECONDS) % 1;
+    this.daylightVisualTimer -= deltaSeconds;
+    if (deltaSeconds > 0 && this.daylightVisualTimer > 0) return;
+    this.daylightVisualTimer = 0.08;
+
+    // 06:00 doğum, 12:00 tepe, 18:00 batım. Alacakaranlıkta yumuşak geçiş.
+    const solarHeight = Math.sin((this.dayPhase - 0.25) * Math.PI * 2);
+    const daylight = smooth((solarHeight + 0.18) / 0.5);
+    const wasNight = this.nightTime;
+    this.nightTime = daylight < 0.3;
+
+    if (this.scene.background instanceof THREE.Color) {
+      this.scene.background
+        .copy(this.nightSkyColor)
+        .lerp(this.daySkyColor, daylight)
+        .lerp(this.rainSkyColor, this.ambient.rainStrength * 0.56);
+    }
+
+    const rainDim = 1 - this.ambient.rainStrength * 0.26;
+    this.hemisphereLight.intensity = lerp(0.28, 1.6, daylight) * rainDim;
+    this.hemisphereLight.color.setHex(this.nightTime ? 0x7187ad : 0xdce9f5);
+    this.hemisphereLight.groundColor.setHex(this.nightTime ? 0x172233 : 0x5a5f66);
+    this.sunLight.intensity =
+      lerp(0.04, 2.1, daylight) *
+      (1 - this.ambient.rainStrength * 0.68);
+    this.sunLight.color.setHex(daylight < 0.55 ? 0xffb86c : 0xfff3dd);
+    this.sunLight.position.set(
+      Math.cos(this.dayPhase * Math.PI * 2) * 11,
+      Math.max(2.2, 15 * Math.max(0.08, solarHeight)),
+      Math.sin(this.dayPhase * Math.PI * 2) * 9,
+    );
+    this.renderer.toneMappingExposure =
+      lerp(0.72, 1.08, daylight) *
+      (1 - this.ambient.rainStrength * 0.12);
+
+    for (const light of this.stationNightLights) {
+      light.intensity = lerp(18, 0, daylight);
+    }
+    this.ambient.setDaylight(daylight);
+
+    if (wasNight !== this.nightTime) this.applyRunningLights();
+  }
+
+  private applyRunningLights(): void {
+    for (const trafficCar of this.trafficCars) {
+      setCarRunningLights(trafficCar.mesh, this.nightTime);
+    }
+    for (const car of this.carMeshes.values()) {
+      setCarRunningLights(car, this.nightTime);
+    }
+    if (this.emergencyVehicle !== null) {
+      setCarRunningLights(this.emergencyVehicle.mesh, this.nightTime);
+    }
+    if (this.rescueDelivery !== null) {
+      setCarRunningLights(this.rescueDelivery.truck, this.nightTime);
+      setCarRunningLights(this.rescueDelivery.car, this.nightTime);
+    }
+    if (this.fuelDelivery !== null) {
+      setCarRunningLights(this.fuelDelivery.truck, this.nightTime);
+    }
+    for (const trafficCar of this.trafficCars) {
+      const towTruck = trafficCar.event?.towTruck;
+      if (towTruck !== undefined) setCarRunningLights(towTruck, this.nightTime);
+    }
+  }
+
+  /**
+   * Gerçek SpotLight'lar yalnızca kameraya yakın birkaç araçta açık kalır.
+   * Far yüzeyleri bütün gece emissive görünür; pahalı yol aydınlatması bütçelenir.
+   */
+  private updateVehicleLightBudget(deltaSeconds: number): void {
+    this.lightBudgetTimer -= deltaSeconds;
+    if (this.lightBudgetTimer > 0) return;
+    this.lightBudgetTimer = 0.12;
+
+    const candidates: Array<{ mesh: THREE.Group; priority: number }> = [];
+    const allMeshes = new Set<THREE.Group>();
+    const addCandidate = (mesh: THREE.Group, priority: number): void => {
+      allMeshes.add(mesh);
+      if (Math.abs(mesh.position.z) <= ACTIVE_HEADLIGHT_RANGE_Z) {
+        candidates.push({ mesh, priority: priority - Math.abs(mesh.position.z) });
+      }
+    };
+
+    for (const trafficCar of this.trafficCars) {
+      addCandidate(trafficCar.mesh, trafficCar.highBeamTimer > 0 ? 130 : 30);
+      const towTruck = trafficCar.event?.towTruck;
+      if (towTruck !== undefined) addCandidate(towTruck, 55);
+    }
+    for (const mesh of this.carMeshes.values()) addCandidate(mesh, 110);
+    if (this.emergencyVehicle !== null) addCandidate(this.emergencyVehicle.mesh, 120);
+    if (this.rescueDelivery !== null) {
+      addCandidate(this.rescueDelivery.truck, 85);
+      if (!this.rescueDelivery.delivered) addCandidate(this.rescueDelivery.car, 65);
+    }
+    if (this.fuelDelivery !== null) addCandidate(this.fuelDelivery.truck, 92);
+
+    candidates.sort((a, b) => b.priority - a.priority);
+    const vehicleBudget = this.isMobileDevice ? 4 : 6;
+    const enabled = new Set(
+      this.nightTime
+        ? candidates.slice(0, vehicleBudget).map((candidate) => candidate.mesh)
+        : [],
+    );
+    for (const mesh of allMeshes) {
+      setCarLightBeamsEnabled(mesh, enabled.has(mesh));
+    }
+  }
+
+  /** Ücreti ödenen ikmal için ana yoldan gerçek bir tanker çağırır. */
+  startFuelDelivery(fuel: FuelType): boolean {
+    if (this.fuelDelivery !== null) return false;
+
+    const truck = createFuelTanker(fuel);
+    truck.scale.setScalar(0.88);
+    truck.position.set(
+      INBOUND_TRAFFIC_X,
+      VEHICLE_Y,
+      this.findClearInboundLongVehiclePosition(FUEL_TANKER_ROUTE_LIMIT),
+    );
+    truck.rotation.y = 0;
+    truck.userData.trafficColor = findFuel(fuel).color;
+    setCarRunningLights(truck, this.nightTime);
+    setCarLightBeamsEnabled(truck, false);
+    setCarHazards(truck, false);
+    setFuelTankerUnloading(truck, 0);
+    this.scene.add(truck);
+
+    this.fuelDelivery = {
+      truck,
+      fuel,
+      speed: 2.85,
+      phase: 'road',
+      z: truck.position.z,
+      progress: 0,
+      elapsed: 0,
+      completed: false,
+      entryRoute: null,
+      exitRoute: null,
+    };
+    return true;
+  }
+
+  private updateFuelDelivery(deltaSeconds: number): void {
+    const delivery = this.fuelDelivery;
+    if (delivery === null) return;
+    delivery.elapsed += deltaSeconds;
+    const signalPulse = Math.floor(delivery.elapsed * 2.25) % 2 === 0;
+
+    if (delivery.phase === 'road') {
+      const previousZ = delivery.z;
+      let headway = Number.POSITIVE_INFINITY;
+      for (const trafficCar of this.trafficCars) {
+        if (trafficCar.direction !== -1 || trafficCar.laneX !== INBOUND_TRAFFIC_X) {
+          continue;
+        }
+        const ahead = delivery.z - trafficCar.mesh.position.z;
+        if (ahead > 0) headway = Math.min(headway, ahead);
+      }
+      const rescue = this.rescueDelivery;
+      if (
+        rescue !== null &&
+        (rescue.phase === 'road' || rescue.phase === 'waiting') &&
+        Math.abs(rescue.truck.position.x - INBOUND_TRAFFIC_X) < 1
+      ) {
+        const rescueAhead = delivery.z - rescue.truck.position.z;
+        if (rescueAhead > 0) headway = Math.min(headway, rescueAhead);
+        const carriedCarAhead = delivery.z - rescue.car.position.z;
+        if (carriedCarAhead > 0) headway = Math.min(headway, carriedCarAhead);
+      }
+
+      const entryBlocked =
+        this.stationRouteOwnerId !== null ||
+        this.rescueBlocksStationRoutes() ||
+        this.emergencyVehicle !== null;
+      let distance = Math.min(
+        delivery.speed * deltaSeconds,
+        Math.max(0, headway - MIN_TRAFFIC_GAP * 1.7),
+      );
+      if (entryBlocked) {
+        distance = Math.min(
+          distance,
+          Math.max(0, delivery.z - FUEL_TANKER_ENTRY_STOP_Z),
+        );
+      }
+      delivery.z -= distance;
+      delivery.truck.position.set(INBOUND_TRAFFIC_X, VEHICLE_Y, delivery.z);
+      setCarTurnSignal(delivery.truck, 'right', signalPulse);
+
+      if (!entryBlocked && previousZ >= ENTRY_Z && delivery.z <= ENTRY_Z) {
+        delivery.phase = 'entering';
+        delivery.progress = 0;
+        delivery.elapsed = 0;
+        delivery.entryRoute = this.createFuelDeliveryEntryRoute();
+        return;
+      }
+      if (entryBlocked && delivery.z <= FUEL_TANKER_ENTRY_STOP_Z + 0.01) {
+        delivery.phase = 'waiting';
+        delivery.z = FUEL_TANKER_ENTRY_STOP_Z;
+        delivery.elapsed = 0;
+      }
+      return;
+    }
+
+    if (delivery.phase === 'waiting') {
+      delivery.truck.position.set(
+        INBOUND_TRAFFIC_X,
+        VEHICLE_Y,
+        FUEL_TANKER_ENTRY_STOP_Z,
+      );
+      setCarHazards(
+        delivery.truck,
+        Math.floor(delivery.elapsed * 2.2) % 2 === 0,
+      );
+      if (
+        this.stationRouteOwnerId !== null ||
+        this.rescueBlocksStationRoutes() ||
+        this.emergencyVehicle !== null ||
+        delivery.elapsed < 0.65
+      ) {
+        return;
+      }
+      setCarHazards(delivery.truck, false);
+      delivery.phase = 'entering';
+      delivery.progress = 0;
+      delivery.elapsed = 0;
+      delivery.entryRoute = this.createFuelDeliveryEntryRoute(
+        FUEL_TANKER_ENTRY_STOP_Z,
+      );
+      return;
+    }
+
+    if (delivery.phase === 'entering') {
+      const route = delivery.entryRoute;
+      if (route === null) return;
+      delivery.progress = Math.min(1, delivery.progress + deltaSeconds / 4.6);
+      const transform = sampleStationRoute(route, delivery.progress);
+      delivery.truck.position.set(transform.x, VEHICLE_Y, transform.z);
+      delivery.truck.rotation.y = transform.rotation;
+      setCarTurnSignal(delivery.truck, 'right', signalPulse);
+
+      if (delivery.progress < 1) return;
+      delivery.phase = 'unloading';
+      delivery.progress = 0;
+      delivery.elapsed = 0;
+      setCarTurnSignal(delivery.truck, null, false);
+      setCarHazards(delivery.truck, true);
+      return;
+    }
+
+    if (delivery.phase === 'unloading') {
+      const hoseIn = smooth(Math.min(1, delivery.elapsed / 0.85));
+      const hoseOut = smooth(
+        Math.min(
+          1,
+          Math.max(0, (FUEL_TANKER_UNLOAD_SECONDS - delivery.elapsed) / 0.85),
+        ),
+      );
+      setFuelTankerUnloading(delivery.truck, Math.min(hoseIn, hoseOut));
+      setCarHazards(
+        delivery.truck,
+        Math.floor(delivery.elapsed * 2.25) % 2 === 0,
+      );
+      if (delivery.elapsed < FUEL_TANKER_UNLOAD_SECONDS) return;
+
+      setFuelTankerUnloading(delivery.truck, 0);
+      if (!delivery.completed) {
+        delivery.completed = true;
+        this.onFuelDeliveryComplete?.(delivery.fuel);
+      }
+      delivery.phase = 'departing';
+      delivery.progress = 0;
+      delivery.elapsed = 0;
+      delivery.exitRoute = this.createFuelDeliveryExitRoute(
+        delivery.truck.position,
+      );
+      setCarHazards(delivery.truck, false);
+      return;
+    }
+
+    const route = delivery.exitRoute;
+    if (route === null) return;
+    delivery.progress = Math.min(1, delivery.progress + deltaSeconds / 8.8);
+    const transform = sampleStationRoute(route, delivery.progress);
+    delivery.truck.position.set(transform.x, VEHICLE_Y, transform.z);
+    delivery.truck.rotation.y = transform.rotation;
+    setCarTurnSignal(delivery.truck, 'left', signalPulse);
+
+    if (delivery.progress < 1) return;
+    this.scene.remove(delivery.truck);
+    disposeEffect(delivery.truck);
+    this.fuelDelivery = null;
+  }
+
+  private createFuelDeliveryEntryRoute(
+    startZ = ENTRY_Z,
+  ): THREE.CatmullRomCurve3 {
+    const route = new THREE.CatmullRomCurve3(
+      [
+        new THREE.Vector3(INBOUND_TRAFFIC_X, 0, startZ),
+        new THREE.Vector3(ROAD_X - ROAD_WIDTH / 2 + 0.08, 0, ENTRY_Z - 0.15),
+        new THREE.Vector3(5.15, 0, ENTRY_Z + 0.7),
+        new THREE.Vector3(FUEL_TANKER_BAY_X, 0, 13.35),
+        new THREE.Vector3(FUEL_TANKER_BAY_X, 0, FUEL_TANKER_BAY_Z),
+      ],
+      false,
+      'centripetal',
+    );
+    route.arcLengthDivisions = 96;
+    return route;
+  }
+
+  private createFuelDeliveryExitRoute(
+    from: THREE.Vector3,
+  ): THREE.CatmullRomCurve3 {
+    const route = new THREE.CatmullRomCurve3(
+      [
+        new THREE.Vector3(from.x, 0, from.z),
+        new THREE.Vector3(3.3, 0, 13.7),
+        new THREE.Vector3(0.5, 0, 10.2),
+        new THREE.Vector3(LANE_X, 0, 4.5),
+        new THREE.Vector3(LANE_X, 0, EXIT_Z + 2.2),
+        new THREE.Vector3(4.8, 0, EXIT_Z + 0.75),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, EXIT_Z),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, 4),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, FUEL_TANKER_ROUTE_LIMIT),
+      ],
+      false,
+      'centripetal',
+    );
+    route.arcLengthDivisions = 160;
+    return route;
+  }
+
+  /** Yolda yakıtı biten aracı, görünür bir çekiciyle istasyona getirir. */
+  private startRescueDelivery(): boolean {
+    if (
+      this.rescueDelivery !== null ||
+      this.fuelDelivery !== null ||
+      this.emergencyVehicle !== null ||
+      this.catEvent !== null ||
+      this.trafficCars.some((trafficCar) => trafficCar.event?.kind === 'breakdown')
+    ) {
+      return false;
+    }
+
+    const startZ = RESCUE_ROUTE_LIMIT;
+    const entryClear = this.trafficCars.every(
+      (trafficCar) =>
+        trafficCar.direction !== -1 ||
+        Math.abs(trafficCar.mesh.position.z - startZ) > MIN_TRAFFIC_GAP * 2.3,
+    );
+    if (!entryClear) return false;
+
+    const truck = createCar(0xd9952f, 'tow');
+    const customerStyle = randomItem(
+      ['compact', 'executive', 'classic'] as const,
+    ) ?? 'compact';
+    const color = randomItem([0x4d92c7, 0xdf5a4d, 0x8161b5, 0xe2e3dd]) ?? 0x4d92c7;
+    const car = createCar(color, customerStyle);
+    truck.scale.setScalar(0.88);
+    car.scale.setScalar(0.68);
+    truck.rotation.y = 0;
+    car.rotation.y = 0;
+    // Mesh'ler sahneye eklenmeden önce ilk pozlarını alır; aksi halde bir kare
+    // boyunca varsayılan (0,0,0) noktasında parlayıp kaybolurlar.
+    truck.position.set(INBOUND_TRAFFIC_X, VEHICLE_Y, startZ);
+    car.position.set(INBOUND_TRAFFIC_X, VEHICLE_Y + 0.62, startZ + 0.72);
+    truck.userData.trafficColor = 0xd9952f;
+    car.userData.trafficColor = color;
+    car.userData.vehicleStyle = customerStyle;
+    setCarRunningLights(truck, this.nightTime);
+    setCarRunningLights(car, this.nightTime);
+    setCarLightBeamsEnabled(truck, false);
+    setCarLightBeamsEnabled(car, false);
+    setCarHazards(car, true);
+    this.scene.add(truck, car);
+
+    this.rescueDelivery = {
+      truck,
+      car,
+      color,
+      speed: randomBetween(3.1, 3.6),
+      z: startZ,
+      delivered: false,
+      phase: 'road',
+      progress: 0,
+      elapsed: 0,
+      customer: null,
+      exitRoute: null,
+      unloadStart: null,
+      customerReleased: false,
+    };
+    return true;
+  }
+
+  private updateRescueDelivery(deltaSeconds: number): void {
+    const delivery = this.rescueDelivery;
+    if (delivery === null) return;
+
+    delivery.elapsed += deltaSeconds;
+    const signalPulse = Math.floor(delivery.elapsed * 2.4) % 2 === 0;
+
+    if (delivery.phase === 'road') {
+      const previousZ = delivery.z;
+      let headway = Number.POSITIVE_INFINITY;
+      for (const trafficCar of this.trafficCars) {
+        if (trafficCar.direction !== -1 || trafficCar.laneX !== INBOUND_TRAFFIC_X) continue;
+        const ahead = delivery.z - trafficCar.mesh.position.z;
+        if (ahead > 0) headway = Math.min(headway, ahead);
+      }
+
+      let distance = Math.min(
+        delivery.speed * deltaSeconds,
+        Math.max(0, headway - MIN_TRAFFIC_GAP * 1.55),
+      );
+      // Ortak istasyon rotası doluyken çekici giriş ağzında görünür biçimde
+      // sıraya girer; sahaya ışınlanmaz.
+      if (this.stationRouteOwnerId !== null) {
+        distance = Math.min(distance, Math.max(0, delivery.z - RESCUE_ENTRY_STOP_Z));
+      }
+      delivery.z -= distance;
+      delivery.truck.position.set(INBOUND_TRAFFIC_X, VEHICLE_Y, delivery.z);
+      delivery.car.position.set(
+        INBOUND_TRAFFIC_X,
+        VEHICLE_Y + 0.62,
+        delivery.z + 0.72,
+      );
+      setCarHazards(delivery.car, Math.floor(delivery.elapsed * 2.2) % 2 === 0);
+      setCarTurnSignal(delivery.truck, 'right', signalPulse);
+
+      if (
+        this.stationRouteOwnerId === null &&
+        previousZ >= ENTRY_Z &&
+        delivery.z <= ENTRY_Z
+      ) {
+        const customer = this.onFuelRescueAtEntrance?.(delivery.color) ?? null;
+        if (customer !== null) {
+          this.beginRescueStationDelivery(delivery, customer);
+          return;
+        }
+        // Boş pompa yoksa çekici kaybolmaz; giriş ağzında dörtlülerini yakıp
+        // yer açılmasını bekler ve ardından aynı teslimatı tamamlar.
+        delivery.phase = 'waiting';
+        delivery.z = ENTRY_Z + 0.25;
+        delivery.elapsed = 0;
+        delivery.truck.position.set(INBOUND_TRAFFIC_X, VEHICLE_Y, delivery.z);
+        delivery.car.position.set(
+          INBOUND_TRAFFIC_X,
+          VEHICLE_Y + 0.62,
+          delivery.z + 0.72,
+        );
+        return;
+      }
+
+      if (delivery.z >= -RESCUE_ROUTE_LIMIT) return;
+      this.scene.remove(delivery.truck, delivery.car);
+      disposeEffect(delivery.truck);
+      disposeEffect(delivery.car);
+      this.rescueDelivery = null;
+      return;
+    }
+
+    if (delivery.phase === 'waiting') {
+      delivery.truck.position.set(INBOUND_TRAFFIC_X, VEHICLE_Y, delivery.z);
+      delivery.car.position.set(
+        INBOUND_TRAFFIC_X,
+        VEHICLE_Y + 0.62,
+        delivery.z + 0.72,
+      );
+      setCarHazards(delivery.car, Math.floor(delivery.elapsed * 2.2) % 2 === 0);
+      setCarTurnSignal(delivery.truck, 'right', signalPulse);
+      if (this.stationRouteOwnerId !== null || delivery.elapsed < 0.7) return;
+
+      delivery.elapsed = 0;
+      const customer = this.onFuelRescueAtEntrance?.(delivery.color) ?? null;
+      if (customer !== null) this.beginRescueStationDelivery(delivery, customer);
+      return;
+    }
+
+    const customer = delivery.customer;
+    if (customer === null) return;
+
+    if (delivery.phase === 'entering') {
+      delivery.progress = Math.min(
+        RESCUE_TRUCK_UNLOAD_PROGRESS,
+        delivery.progress + deltaSeconds / 4.25,
+      );
+      this.positionRescueOnArrivalRoute(delivery, delivery.progress);
+      setCarHazards(delivery.car, Math.floor(delivery.elapsed * 2.2) % 2 === 0);
+      setCarTurnSignal(delivery.truck, 'right', signalPulse);
+
+      if (delivery.progress < RESCUE_TRUCK_UNLOAD_PROGRESS) return;
+      delivery.phase = 'unloading';
+      delivery.elapsed = 0;
+      delivery.unloadStart = {
+        x: delivery.car.position.x,
+        z: delivery.car.position.z,
+        rotation: delivery.car.rotation.y,
+      };
+      return;
+    }
+
+    if (delivery.phase === 'unloading') {
+      const unloadProgress = Math.min(1, delivery.elapsed / RESCUE_UNLOAD_SECONDS);
+      const eased = smooth(unloadProgress);
+      const slot = findSlot(customer.slotIndex);
+      const unloadStart = delivery.unloadStart;
+      if (slot === undefined || unloadStart === null) return;
+      const arrivalRoute = stationRoute(slot, 'arriving');
+      const truckTransform = sampleStationRoute(
+        arrivalRoute,
+        RESCUE_TRUCK_UNLOAD_PROGRESS,
+      );
+      const unloadTarget: CarTransform = {
+        x: slot.carX,
+        z: slot.z,
+        rotation: parkedRotation(slot),
+      };
+      delivery.truck.position.set(truckTransform.x, VEHICLE_Y, truckTransform.z);
+      delivery.truck.rotation.y = truckTransform.rotation;
+      delivery.car.position.set(
+        lerp(unloadStart.x, unloadTarget.x, eased),
+        lerp(VEHICLE_Y + 0.62, VEHICLE_Y, eased),
+        lerp(unloadStart.z, unloadTarget.z, eased),
+      );
+      delivery.car.rotation.y = lerpAngle(
+        unloadStart.rotation,
+        unloadTarget.rotation,
+        eased,
+      );
+      const carScale = lerp(0.68, TRAFFIC_CAR_SCALE, eased);
+      delivery.car.scale.setScalar(carScale);
+      setTowPlatformUnload(delivery.truck, eased);
+      setCarHazards(delivery.car, Math.floor(delivery.elapsed * 3) % 2 === 0);
+
+      if (unloadProgress < 1) return;
+      customer.progress = 1;
+      delivery.customerReleased = true;
+      this.onRescueCarDelivered?.(customer);
+      delivery.phase = 'departing';
+      delivery.progress = 0;
+      delivery.elapsed = 0;
+      delivery.exitRoute = this.createRescueExitRoute(delivery.truck.position);
+      setCarHazards(delivery.car, false);
+      setCarTurnSignal(delivery.car, null, false);
+      return;
+    }
+
+    const exitRoute = delivery.exitRoute;
+    if (exitRoute === null) return;
+    delivery.progress = Math.min(1, delivery.progress + deltaSeconds / 7.5);
+    const truckTransform = sampleStationRoute(exitRoute, delivery.progress);
+    delivery.truck.position.set(truckTransform.x, VEHICLE_Y, truckTransform.z);
+    delivery.truck.rotation.y = truckTransform.rotation;
+    setTowPlatformUnload(
+      delivery.truck,
+      1 - smooth(Math.min(1, delivery.progress / 0.13)),
+    );
+    setCarTurnSignal(delivery.truck, 'left', signalPulse);
+
+    if (delivery.progress < 1) return;
+    if (!delivery.customerReleased) {
+      delivery.customerReleased = true;
+      customer.progress = 1;
+      this.onRescueCarDelivered?.(customer);
+    }
+    this.scene.remove(delivery.truck);
+    disposeEffect(delivery.truck);
+    this.rescueDelivery = null;
+  }
+
+  private transferRescueCarToCustomer(mesh: THREE.Group, customer: Car): void {
+    mesh.userData.slotIndex = customer.slotIndex;
+    mesh.userData.pickKind = 'car';
+    setCarTurnSignal(mesh, 'right', true);
+    this.carMeshes.set(customer.id, mesh);
+    this.pickables.push(mesh);
+  }
+
+  private beginRescueStationDelivery(
+    delivery: RescueDelivery,
+    customer: Car,
+  ): void {
+    delivery.delivered = true;
+    delivery.customer = customer;
+    delivery.phase = 'entering';
+    delivery.progress = 0;
+    delivery.elapsed = 0;
+    this.stationRouteOwnerId = customer.id;
+    this.transferRescueCarToCustomer(delivery.car, customer);
+    this.positionRescueOnArrivalRoute(delivery, 0);
+  }
+
+  private positionRescueOnArrivalRoute(
+    delivery: RescueDelivery,
+    truckProgress: number,
+  ): void {
+    const customer = delivery.customer;
+    if (customer === null) return;
+    const slot = findSlot(customer.slotIndex);
+    if (slot === undefined) return;
+    const route = stationRoute(slot, 'arriving');
+    const truckTransform = sampleStationRoute(route, truckProgress);
+    const tangent = route.getTangentAt(smooth(truckProgress));
+    delivery.truck.position.set(truckTransform.x, VEHICLE_Y, truckTransform.z);
+    delivery.truck.rotation.y = truckTransform.rotation;
+    delivery.car.position.set(
+      truckTransform.x - tangent.x * 0.72,
+      VEHICLE_Y + 0.62,
+      truckTransform.z - tangent.z * 0.72,
+    );
+    delivery.car.rotation.y = truckTransform.rotation;
+  }
+
+  private createRescueExitRoute(from: THREE.Vector3): THREE.CatmullRomCurve3 {
+    const route = new THREE.CatmullRomCurve3(
+      [
+        new THREE.Vector3(from.x, 0, from.z),
+        new THREE.Vector3(LANE_X, 0, from.z - 1.25),
+        new THREE.Vector3(
+          LANE_X,
+          0,
+          Math.min(from.z - 2.55, EXIT_Z + 2.1),
+        ),
+        new THREE.Vector3(LANE_X + 2.05, 0, EXIT_Z + 1.05),
+        new THREE.Vector3(ROAD_X - ROAD_WIDTH / 2 + 0.1, 0, EXIT_Z + 0.15),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, EXIT_Z),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, EXIT_Z + 9),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, RESCUE_ROUTE_LIMIT),
+      ],
+      false,
+      'centripetal',
+    );
+    route.arcLengthDivisions = 128;
+    return route;
+  }
+
+  /**
+   * Müşteri aracı yoldan ayrılır ayrılmaz normal trafik havuzundan çıkar. Bu
+   * ek takip hesabı, arkadan gelenlerin dönüş yapan arabanın içinden geçmesini
+   * ve çıkış yapan araçla yol trafiğinin üst üste binmesini engeller.
+   */
+  private stationCarHeadway(trafficCar: TrafficCar): number {
+    let nearest = Number.POSITIVE_INFINITY;
+
+    const consider = (stationCar: THREE.Group): void => {
+      if (stationCar === trafficCar.mesh) return;
+      if (
+        Math.abs(stationCar.position.x - trafficCar.mesh.position.x) >
+        STATION_CAR_REACTION_WIDTH
+      ) {
+        return;
+      }
+
+      const forwardDistance = trafficCar.direction === -1
+        ? trafficCar.mesh.position.z - stationCar.position.z
+        : stationCar.position.z - trafficCar.mesh.position.z;
+      if (forwardDistance > 0) nearest = Math.min(nearest, forwardDistance);
+    };
+
+    for (const stationCar of this.carMeshes.values()) consider(stationCar);
+
+    const rescue = this.rescueDelivery;
+    if (rescue !== null) {
+      const sharesTrafficDirection =
+        (
+          (rescue.phase === 'road' || rescue.phase === 'waiting') &&
+          trafficCar.direction === -1
+        ) ||
+        (rescue.phase === 'departing' && trafficCar.direction === 1);
+      if (sharesTrafficDirection) {
+        consider(rescue.truck);
+        if (!rescue.delivered) consider(rescue.car);
+      }
+    }
+
+    const fuelDelivery = this.fuelDelivery;
+    if (fuelDelivery !== null) {
+      const sharesTrafficDirection =
+        (
+          (fuelDelivery.phase === 'road' || fuelDelivery.phase === 'waiting') &&
+          trafficCar.direction === -1
+        ) ||
+        (fuelDelivery.phase === 'departing' && trafficCar.direction === 1);
+      if (sharesTrafficDirection) consider(fuelDelivery.truck);
+    }
+
+    return nearest;
   }
 
   /** Her birkaç saniyede bir, sahnede okunabilir tek bir mikro-olay başlatır. */
@@ -590,6 +1852,9 @@ export class World {
     const starters: Array<() => boolean> = [
       () => this.startCatEvent(),
       () => this.startBassEvent(),
+      () => this.startHornEvent(),
+      () => this.startSwerveEvent(),
+      () => this.startRushEvent(),
       () => this.startOvertakeEvent(),
       () => this.startBreakdownEvent(),
     ];
@@ -605,7 +1870,19 @@ export class World {
   private startEmergencyVehicle(): boolean {
     // Kedi yoldayken ayrı bir olay başlatmıyoruz; kedi biter bitmez kısa süre
     // içinde yeniden denenir. Böylece iki davranış birbirini okunmaz yapmaz.
-    if (this.emergencyVehicle !== null || this.catEvent !== null) return false;
+    if (
+      this.emergencyVehicle !== null ||
+      this.catEvent !== null ||
+      this.rescueDelivery !== null ||
+      this.fuelDelivery !== null ||
+      this.trafficCars.some((trafficCar) => trafficCar.event?.kind === 'breakdown')
+    ) {
+      return false;
+    }
+    const drivewayBusy = [...this.carMeshes.values()].some(
+      (car) => car.position.x > ROAD_X - ROAD_WIDTH / 2 - 0.35,
+    );
+    if (drivewayBusy) return false;
 
     // Aktif mikro-olayları kapatınca herkes kendi şeridine döner; ardından iki
     // taraf da aynı anda yol kenarına çekilebilir.
@@ -622,6 +1899,8 @@ export class World {
       direction === -1 ? EMERGENCY_ROUTE_LIMIT : -EMERGENCY_ROUTE_LIMIT,
     );
     mesh.rotation.y = direction === -1 ? 0 : Math.PI;
+    setCarRunningLights(mesh, this.nightTime);
+    setCarLightBeamsEnabled(mesh, false);
     this.scene.add(mesh);
 
     this.emergencyVehicle = {
@@ -630,6 +1909,7 @@ export class World {
       speed: randomBetween(9.4, 11.2),
       elapsed: 0,
     };
+    this.onEmergencySiren?.(true);
     return true;
   }
 
@@ -656,6 +1936,8 @@ export class World {
     this.scene.remove(emergency.mesh);
     disposeEffect(emergency.mesh);
     this.emergencyVehicle = null;
+    this.onEmergencySiren?.(false);
+    for (const trafficCar of this.trafficCars) setCarHazards(trafficCar.mesh, false);
   }
 
   /**
@@ -665,6 +1947,15 @@ export class World {
   private emergencyYieldMultiplier(trafficCar: TrafficCar, deltaSeconds: number): number {
     const emergency = this.emergencyVehicle;
     if (emergency === null) {
+      // Bu olaylar x konumunu kendi mutlak eğrilerinden yönetir. Aynı karede
+      // şerit merkezine lerp etmek iki hedef arasında mikro titremeye yol açar.
+      if (
+        trafficCar.event?.kind === 'breakdown' ||
+        trafficCar.event?.kind === 'swerve' ||
+        trafficCar.event?.kind === 'overtake'
+      ) {
+        return 1;
+      }
       trafficCar.mesh.position.x = lerp(
         trafficCar.mesh.position.x,
         trafficCar.laneX,
@@ -675,6 +1966,7 @@ export class World {
 
     const distance = Math.abs(trafficCar.mesh.position.z - emergency.mesh.position.z);
     if (distance > EMERGENCY_YIELD_DISTANCE) {
+      setCarHazards(trafficCar.mesh, false);
       trafficCar.mesh.position.x = lerp(
         trafficCar.mesh.position.x,
         trafficCar.laneX,
@@ -685,6 +1977,10 @@ export class World {
 
     const side = trafficCar.laneX < ROAD_X ? -1 : 1;
     const shoulderX = ROAD_X + side * (ROAD_WIDTH / 2 - EMERGENCY_SHOULDER_INSET);
+    setCarHazards(
+      trafficCar.mesh,
+      Math.floor(emergency.elapsed * 2.6) % 2 === 0,
+    );
     trafficCar.mesh.position.x = lerp(
       trafficCar.mesh.position.x,
       shoulderX,
@@ -729,6 +2025,62 @@ export class World {
     const effect = createBassEffect();
     convertible.mesh.add(effect);
     convertible.event = { kind: 'bass', elapsed: 0, duration: 5.5, effect };
+    this.onBassMusic?.(true);
+    return true;
+  }
+
+  /** Sıkışan bir sürücünün kısa korna tepkisi. */
+  private startHornEvent(): boolean {
+    const candidates = this.trafficCars.filter((trafficCar) => {
+      if (trafficCar.event !== null) return false;
+      const lead = this.trafficAhead(trafficCar);
+      return lead !== null && lead.distance < 10;
+    });
+    const trafficCar = randomItem(candidates);
+    if (trafficCar === null) return false;
+
+    trafficCar.event = { kind: 'horn', elapsed: 0, duration: 0.7 };
+    this.onTrafficHorn?.();
+    return true;
+  }
+
+  /** Çukur/bozuk zemin hissi veren kısa şerit içi kaçınma manevrası. */
+  private startSwerveEvent(): boolean {
+    const trafficCar = randomItem(
+      this.trafficCars.filter(
+        (candidate) =>
+          candidate.event === null &&
+          Math.abs(candidate.mesh.position.z - ENTRY_Z) > 9,
+      ),
+    );
+    if (trafficCar === null) return false;
+
+    const roadMin = ROAD_X - ROAD_WIDTH / 2 + 0.42;
+    const roadMax = ROAD_X + ROAD_WIDTH / 2 - 0.42;
+    const offset = Math.random() < 0.5 ? -0.42 : 0.42;
+    trafficCar.event = {
+      kind: 'swerve',
+      elapsed: 0,
+      duration: 2.15,
+      originX: trafficCar.mesh.position.x,
+      targetX: Math.max(roadMin, Math.min(roadMax, trafficCar.mesh.position.x + offset)),
+    };
+    return true;
+  }
+
+  /** Spor aracın kısa süre hızlanıp yeniden akış hızına dönmesi. */
+  private startRushEvent(): boolean {
+    const trafficCar = randomItem(
+      this.trafficCars.filter(
+        (candidate) =>
+          candidate.event === null &&
+          candidate.style === 'sport' &&
+          Math.abs(candidate.mesh.position.z - ENTRY_Z) > 10,
+      ),
+    );
+    if (trafficCar === null) return false;
+
+    trafficCar.event = { kind: 'rush', elapsed: 0, duration: 3.2 };
     return true;
   }
 
@@ -757,6 +2109,7 @@ export class World {
   }
 
   private startBreakdownEvent(): boolean {
+    if (this.rescueDelivery !== null || this.fuelDelivery !== null) return false;
     const candidates = this.trafficCars.filter(
       (trafficCar) =>
         trafficCar.event === null &&
@@ -772,7 +2125,7 @@ export class World {
     trafficCar.event = {
       kind: 'breakdown',
       elapsed: 0,
-      duration: 7.4,
+      duration: 10.8,
       originX: trafficCar.mesh.position.x,
       targetX: ROAD_X + ROAD_WIDTH / 2 + 0.32,
       effect,
@@ -847,10 +2200,7 @@ export class World {
     );
   }
 
-  /**
-   * Öndeki araç fren yaptığında arkasındaki sürücü kısa kısa sellektör yapar.
-   * Bu artık rastgele değil, gerçek takip mesafesi ve frenleme sonucunda tetiklenir.
-   */
+  /** Takipte sıkışan sürücü gece selektör, gündüz kısa korna ile tepki verir. */
   private updateFollowerHighBeam(
     trafficCar: TrafficCar,
     desiredDistance: number,
@@ -870,8 +2220,19 @@ export class World {
       (wasForcedToBrake || leadIsStoppingForCat || leadIsStopped);
 
     if (shouldWarn && trafficCar.highBeamCooldown <= 0) {
-      trafficCar.highBeamTimer = 0.52;
-      trafficCar.highBeamCooldown = randomBetween(0.82, 1.45);
+      if (this.nightTime) {
+        trafficCar.highBeamTimer = 0.52;
+        trafficCar.highBeamCooldown = randomBetween(0.82, 1.45);
+      } else {
+        trafficCar.highBeamTimer = 0;
+        trafficCar.highBeamCooldown = randomBetween(1.35, 2.15);
+        this.onTrafficHorn?.();
+      }
+    }
+
+    if (!this.nightTime) {
+      setCarHeadlights(trafficCar.mesh, false);
+      return;
     }
 
     if (trafficCar.highBeamTimer <= 0) {
@@ -892,9 +2253,52 @@ export class World {
 
     switch (event.kind) {
       case 'bass':
-        if (event.effect !== undefined) this.updateBassEffect(event.effect, event.elapsed);
+        if (event.effect !== undefined) {
+          this.updateBassEffect(trafficCar, event.effect, event.elapsed);
+        }
         if (event.elapsed >= event.duration) this.finishTrafficEvent(trafficCar);
         return 1;
+
+      case 'horn':
+        if (event.elapsed >= event.duration) this.finishTrafficEvent(trafficCar);
+        return 0.96;
+
+      case 'rush': {
+        const progress = Math.min(1, event.elapsed / event.duration);
+        if (progress >= 1) this.finishTrafficEvent(trafficCar);
+        return progress < 0.58
+          ? lerp(1, 1.38, smooth(progress / 0.58))
+          : lerp(1.38, 1, smooth((progress - 0.58) / 0.42));
+      }
+
+      case 'swerve': {
+        const progress = Math.min(1, event.elapsed / event.duration);
+        const originX = event.originX ?? trafficCar.laneX;
+        const targetX = event.targetX ?? trafficCar.laneX;
+        const lateralProgress =
+          progress < 0.42
+            ? smooth(progress / 0.42)
+            : 1 - smooth((progress - 0.42) / 0.58);
+        trafficCar.mesh.position.x = lerp(originX, targetX, lateralProgress);
+
+        const movesToLowerX = targetX < originX;
+        const signalDirection =
+          trafficCar.direction === -1
+            ? movesToLowerX
+              ? 'right'
+              : 'left'
+            : movesToLowerX
+              ? 'left'
+              : 'right';
+        setCarTurnSignal(
+          trafficCar.mesh,
+          signalDirection,
+          Math.floor(event.elapsed * 2.8) % 2 === 0,
+        );
+
+        if (progress >= 1) this.finishTrafficEvent(trafficCar);
+        return 0.88;
+      }
 
       case 'overtake': {
         const progress = Math.min(1, event.elapsed / event.duration);
@@ -924,7 +2328,9 @@ export class World {
 
   private updateBreakdownEvent(trafficCar: TrafficCar, event: TrafficEvent): number {
     const pullOverDuration = 0.9;
-    const stoppedUntil = 5.8;
+    const towArrivalTime = 1.6;
+    const hookTime = 4.7;
+    const towingTime = 5.25;
     const originX = event.originX ?? trafficCar.laneX;
     const targetX = event.targetX ?? trafficCar.laneX;
     const flashing = Math.floor(event.elapsed * 3) % 2 === 0;
@@ -935,28 +2341,99 @@ export class World {
       return 0.28;
     }
 
-    if (event.elapsed < stoppedUntil) {
-      trafficCar.mesh.position.x = targetX;
-      if (event.effect !== undefined) this.updateSmokeEffect(event.effect, event.elapsed);
+    trafficCar.mesh.position.x = targetX;
+    if (event.effect !== undefined && event.elapsed < towingTime) {
+      this.updateSmokeEffect(event.effect, event.elapsed);
+    }
+
+    if (event.elapsed >= towArrivalTime && event.towTruck === undefined) {
+      const towTruck = createCar(0xd9952f, 'tow');
+      towTruck.scale.setScalar(0.88);
+      towTruck.position.set(targetX, VEHICLE_Y, trafficCar.mesh.position.z + 10);
+      towTruck.rotation.y = Math.PI;
+      setCarRunningLights(towTruck, this.nightTime);
+      setCarLightBeamsEnabled(towTruck, false);
+      this.scene.add(towTruck);
+      event.towTruck = towTruck;
+    }
+
+    if (event.elapsed < hookTime) {
+      const towTruck = event.towTruck;
+      if (towTruck !== undefined) {
+        const progress = smooth(
+          (event.elapsed - towArrivalTime) / (hookTime - towArrivalTime),
+        );
+        towTruck.position.set(
+          targetX,
+          VEHICLE_Y,
+          lerp(
+            trafficCar.mesh.position.z + 10,
+            trafficCar.mesh.position.z + 2.75,
+            progress,
+          ),
+        );
+      }
       return 0;
     }
 
-    if (event.elapsed < event.duration) {
-      const progress = (event.elapsed - stoppedUntil) / (event.duration - stoppedUntil);
-      trafficCar.mesh.position.x = lerp(targetX, originX, smooth(progress));
-      return 0.34;
+    if (event.elapsed < towingTime) {
+      return 0;
     }
 
-    this.finishTrafficEvent(trafficCar);
-    return 1;
+    event.towAttached = true;
+    if (event.effect !== undefined) event.effect.visible = false;
+    if (event.elapsed >= event.duration) {
+      event.towComplete = true;
+      return 0;
+    }
+    return 1.28;
   }
 
-  private updateBassEffect(effect: THREE.Group, elapsed: number): void {
+  private syncBreakdownTowTruck(trafficCar: TrafficCar): void {
+    const event = trafficCar.event;
+    if (
+      event?.kind !== 'breakdown' ||
+      event.towAttached !== true ||
+      event.towTruck === undefined
+    ) {
+      return;
+    }
+    event.towTruck.position.set(
+      event.targetX ?? trafficCar.mesh.position.x,
+      VEHICLE_Y,
+      trafficCar.mesh.position.z + trafficCar.direction * 2.75,
+    );
+    event.towTruck.rotation.y = trafficCar.direction === -1 ? 0 : Math.PI;
+  }
+
+  private completeBreakdownTow(trafficCar: TrafficCar, event: TrafficEvent): void {
+    if (event.towTruck !== undefined) {
+      this.scene.remove(event.towTruck);
+      disposeEffect(event.towTruck);
+    }
+    if (event.effect !== undefined) {
+      trafficCar.mesh.remove(event.effect);
+      disposeEffect(event.effect);
+    }
+    setCarHeadlights(trafficCar.mesh, false);
+    setCarHazards(trafficCar.mesh, false);
+    setCarTurnSignal(trafficCar.mesh, null, false);
+    trafficCar.event = null;
+    this.recycleTrafficCar(trafficCar, -1, TRAFFIC_MAX_Z);
+  }
+
+  private updateBassEffect(
+    trafficCar: TrafficCar,
+    effect: THREE.Group,
+    elapsed: number,
+  ): void {
+    const beat = Math.pow(Math.max(0, Math.sin(elapsed * Math.PI * 4.2)), 4);
+    setCarBassPulse(trafficCar.mesh, beat);
     effect.children.forEach((child, index) => {
       if (!(child instanceof THREE.Mesh) || !(child.material instanceof THREE.MeshBasicMaterial)) return;
       const pulse = (elapsed * 1.9 + index * 0.32) % 1;
-      child.scale.setScalar(0.8 + pulse * 1.45);
-      child.material.opacity = 0.52 * (1 - pulse);
+      child.scale.setScalar(0.8 + pulse * 1.45 + beat * 0.18);
+      child.material.opacity = (0.4 + beat * 0.18) * (1 - pulse);
     });
   }
 
@@ -974,14 +2451,27 @@ export class World {
     const event = trafficCar.event;
     if (event === null) return;
 
+    if (event.kind === 'bass') setCarBassPulse(trafficCar.mesh, 0);
     setCarHeadlights(trafficCar.mesh, false);
     setCarHazards(trafficCar.mesh, false);
+    setCarTurnSignal(trafficCar.mesh, null, false);
     if (event.originX !== undefined) trafficCar.mesh.position.x = event.originX;
     if (event.effect !== undefined) {
       trafficCar.mesh.remove(event.effect);
       disposeEffect(event.effect);
     }
+    if (event.towTruck !== undefined) {
+      this.scene.remove(event.towTruck);
+      disposeEffect(event.towTruck);
+    }
     trafficCar.event = null;
+
+    if (
+      event.kind === 'bass' &&
+      !this.trafficCars.some((candidate) => candidate.event?.kind === 'bass')
+    ) {
+      this.onBassMusic?.(false);
+    }
   }
 
   private trafficAhead(trafficCar: TrafficCar): { trafficCar: TrafficCar; distance: number } | null {
@@ -1093,15 +2583,17 @@ export class World {
     const mesh = this.carMeshes.get(car.id);
     if (mesh === undefined) return null;
 
-    const anchor = mesh.position.clone();
-    anchor.y = 1.9;
-    return this.projectToScreen(anchor);
+    this.projectionScratch.copy(mesh.position);
+    this.projectionScratch.y = 1.9;
+    return this.projectToScreen(this.projectionScratch);
   }
 
   resize(): void {
     const width = this.container.clientWidth;
     const height = this.container.clientHeight;
     if (width === 0 || height === 0) return;
+    this.viewportWidth = width;
+    this.viewportHeight = height;
 
     const aspect = width / height;
 
@@ -1129,6 +2621,11 @@ export class World {
 
   /** Ekran koordinatından pompa indeksi bulur. Boşluğa dokunulduysa null. */
   pick(clientX: number, clientY: number): number | null {
+    return this.pickTarget(clientX, clientY)?.slotIndex ?? null;
+  }
+
+  /** Uzun basma için ışının arabaya mı pompa adasına mı değdiğini de döndürür. */
+  pickTarget(clientX: number, clientY: number): WorldPick | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
@@ -1137,23 +2634,29 @@ export class World {
     const hit = this.raycaster.intersectObjects(this.pickables, true)[0];
     if (hit === undefined) return null;
 
+    let slotIndex: number | null = null;
+    let kind: WorldPick['kind'] = 'pump';
     let node: THREE.Object3D | null = hit.object;
     while (node !== null) {
       const index: unknown = node.userData.slotIndex;
-      if (typeof index === 'number') return index;
+      if (typeof index === 'number') slotIndex = index;
+      if (node.userData.pickKind === 'car') kind = 'car';
+      if (node.userData.pickKind === 'market') kind = 'market';
       node = node.parent;
     }
 
-    return null;
+    if (kind === 'market') return { slotIndex: null, kind };
+    return slotIndex === null ? null : { slotIndex, kind };
   }
 
   projectToScreen(position: THREE.Vector3): { x: number; y: number } {
-    const projected = position.clone().project(this.camera);
-    const rect = this.renderer.domElement.getBoundingClientRect();
+    const projected = this.projectionScratch === position
+      ? position.project(this.camera)
+      : this.projectionScratch.copy(position).project(this.camera);
 
     return {
-      x: (projected.x * 0.5 + 0.5) * rect.width,
-      y: (-projected.y * 0.5 + 0.5) * rect.height,
+      x: (projected.x * 0.5 + 0.5) * this.viewportWidth,
+      y: (-projected.y * 0.5 + 0.5) * this.viewportHeight,
     };
   }
 }
@@ -1183,20 +2686,26 @@ function stationRoute(slot: SlotDefinition, kind: StationRouteKind): THREE.Catmu
   const points = kind === 'arriving'
     ? [
         new THREE.Vector3(INBOUND_TRAFFIC_X, 0, ENTRY_Z),
-        new THREE.Vector3(INBOUND_TRAFFIC_X, 0, ENTRY_Z - 1.05),
-        new THREE.Vector3(LANE_X + 1.55, 0, ENTRY_Z - 1.9),
-        new THREE.Vector3(LANE_X + 0.18, 0, ENTRY_Z - 3.05),
-        new THREE.Vector3(LANE_X, 0, slot.z + 1.25),
+        new THREE.Vector3(INBOUND_TRAFFIC_X - 0.95, 0, ENTRY_Z - 0.32),
+        new THREE.Vector3(LANE_X + 2.15, 0, ENTRY_Z - 1.18),
+        new THREE.Vector3(LANE_X + 0.35, 0, ENTRY_Z - 2.35),
+        new THREE.Vector3(LANE_X, 0, slot.z + 1.15),
+        new THREE.Vector3(slot.carX, 0, slot.z + 0.85),
         new THREE.Vector3(slot.carX, 0, slot.z),
       ]
     : [
         new THREE.Vector3(slot.carX, 0, slot.z),
-        new THREE.Vector3(LANE_X, 0, slot.z),
-        new THREE.Vector3(LANE_X, 0, slot.z + 1.15),
-        new THREE.Vector3(LANE_X + 0.18, 0, ENTRY_Z - 2.8),
-        new THREE.Vector3(OUTBOUND_TRAFFIC_X - 1.35, 0, ENTRY_Z - 1.15),
-        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, ENTRY_Z - 0.75),
-        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, ENTRY_Z),
+        new THREE.Vector3(slot.carX, 0, slot.z - 0.85),
+        new THREE.Vector3(LANE_X, 0, slot.z - 1.15),
+        new THREE.Vector3(
+          LANE_X,
+          0,
+          Math.min(slot.z - 2.55, EXIT_Z + 2.1),
+        ),
+        new THREE.Vector3(LANE_X + 1.95, 0, EXIT_Z + 1.1),
+        new THREE.Vector3(ROAD_X - ROAD_WIDTH / 2 + 0.12, 0, EXIT_Z + 0.24),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X - 0.42, 0, EXIT_Z),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, EXIT_Z),
       ];
   const route = new THREE.CatmullRomCurve3(points, false, 'centripetal');
   route.arcLengthDivisions = 96;
@@ -1224,18 +2733,22 @@ function parkedRotation(slot: SlotDefinition): number {
   return rotation;
 }
 
-/** Arabanın yol üzerindeki konumu ve yönü — dönüşler rota teğetinden alınır. */
-function carTransform(car: Car, slot: SlotDefinition): CarTransform {
+/** Belirli bir sonraki ilerleme değeri için arabanın rota pozunu hesaplar. */
+function carTransformAt(
+  car: Car,
+  slot: SlotDefinition,
+  progress: number,
+): CarTransform {
   if (car.phase === 'arriving') {
-    return sampleStationRoute(stationRoute(slot, 'arriving'), car.progress);
+    return sampleStationRoute(stationRoute(slot, 'arriving'), progress);
   }
 
   const parkingRotation = parkedRotation(slot);
   if (car.phase === 'leaving') {
-    const transform = sampleStationRoute(stationRoute(slot, 'leaving'), car.progress);
+    const transform = sampleStationRoute(stationRoute(slot, 'leaving'), progress);
     // Park yerinden çıkışta kısa geri manevra/teker çevirme süresi: araç 180°
     // bir karede dönmez, görünür biçimde yönünü toparlayıp yola katılır.
-    const turnProgress = smooth(Math.min(1, car.progress / 0.24));
+    const turnProgress = smooth(Math.min(1, progress / 0.24));
     return {
       ...transform,
       rotation: lerpAngle(parkingRotation, transform.rotation, turnProgress),
@@ -1243,6 +2756,378 @@ function carTransform(car: Car, slot: SlotDefinition): CarTransform {
   }
 
   return { x: slot.carX, z: slot.z, rotation: parkingRotation };
+}
+
+/** Arabanın yol üzerindeki konumu ve yönü — dönüşler rota teğetinden alınır. */
+function carTransform(car: Car, slot: SlotDefinition): CarTransform {
+  return carTransformAt(car, slot, car.progress);
+}
+
+/**
+ * İki aracın XZ düzlemindeki yönlü gövdelerini SAT ile karşılaştırır. Dairesel
+ * mesafe kullanmamak, merkez şeridin yanındaki park halindeki araçların gereksiz
+ * yere rotayı kilitlemesini önler.
+ */
+function vehicleBodiesOverlap(
+  first: CarTransform,
+  second: CarTransform,
+  margin: number,
+): boolean {
+  const halfWidth = 0.75;
+  const halfLength = 1.62;
+  const firstAxes = [
+    { x: Math.cos(first.rotation), z: -Math.sin(first.rotation) },
+    { x: Math.sin(first.rotation), z: Math.cos(first.rotation) },
+  ] as const;
+  const secondAxes = [
+    { x: Math.cos(second.rotation), z: -Math.sin(second.rotation) },
+    { x: Math.sin(second.rotation), z: Math.cos(second.rotation) },
+  ] as const;
+  const deltaX = second.x - first.x;
+  const deltaZ = second.z - first.z;
+
+  for (const axis of [...firstAxes, ...secondAxes]) {
+    const centerDistance = Math.abs(deltaX * axis.x + deltaZ * axis.z);
+    const firstRadius =
+      halfWidth * Math.abs(firstAxes[0].x * axis.x + firstAxes[0].z * axis.z) +
+      halfLength * Math.abs(firstAxes[1].x * axis.x + firstAxes[1].z * axis.z);
+    const secondRadius =
+      halfWidth * Math.abs(secondAxes[0].x * axis.x + secondAxes[0].z * axis.z) +
+      halfLength * Math.abs(secondAxes[1].x * axis.x + secondAxes[1].z * axis.z);
+    if (centerDistance > firstRadius + secondRadius + margin) return false;
+  }
+  return true;
+}
+
+function createGroundPatch(
+  points: readonly (readonly [number, number])[],
+  material: THREE.Material,
+  y: number,
+): THREE.Mesh {
+  const first = points[0];
+  if (first === undefined) throw new Error('Zemin parçası için en az bir nokta gerekir');
+
+  const shape = new THREE.Shape();
+  shape.moveTo(first[0], -first[1]);
+  for (const [x, z] of points.slice(1)) shape.lineTo(x, -z);
+  shape.closePath();
+
+  const geometry = new THREE.ShapeGeometry(shape);
+  geometry.rotateX(-Math.PI / 2);
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.y = y;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+function createConstructionCone(): THREE.Group {
+  const group = new THREE.Group();
+  const orange = new THREE.MeshStandardMaterial({ color: 0xf07b25, roughness: 0.72 });
+  const white = new THREE.MeshStandardMaterial({ color: 0xf1eee3, roughness: 0.76 });
+  const rubber = new THREE.MeshStandardMaterial({ color: 0x25282a, roughness: 0.92 });
+
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.055, 0.38), rubber);
+  base.position.y = 0.09;
+  base.castShadow = true;
+  group.add(base);
+
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.52, 10), orange);
+  cone.position.y = 0.365;
+  cone.castShadow = true;
+  group.add(cone);
+
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.137, 0.095, 10), white);
+  band.position.y = 0.32;
+  band.castShadow = true;
+  group.add(band);
+  return group;
+}
+
+function createConstructionBarrier(): THREE.Group {
+  const group = new THREE.Group();
+  const orange = new THREE.MeshStandardMaterial({ color: 0xe86f28, roughness: 0.72 });
+  const white = new THREE.MeshStandardMaterial({ color: 0xf1eee3, roughness: 0.78 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x333538, roughness: 0.9 });
+
+  for (const x of [-0.76, 0.76]) {
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.68, 0.09), orange);
+    post.position.set(x, 0.41, 0);
+    post.castShadow = true;
+    group.add(post);
+
+    const foot = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.055, 0.2), dark);
+    foot.position.set(x, 0.09, 0);
+    group.add(foot);
+  }
+
+  for (let index = 0; index < 6; index += 1) {
+    const rail = new THREE.Mesh(
+      new THREE.BoxGeometry(0.255, 0.17, 0.075),
+      index % 2 === 0 ? orange : white,
+    );
+    rail.position.set(-0.6375 + index * 0.255, 0.49, 0);
+    rail.castShadow = true;
+    group.add(rail);
+  }
+  return group;
+}
+
+/** Market satın alınana kadar görünen düşük poligonlu kazı ve güvenlik alanı. */
+function createMarketConstructionSite(): THREE.Group {
+  const group = new THREE.Group();
+  const soilMaterial = new THREE.MeshStandardMaterial({ color: 0x75502f, roughness: 1 });
+  const freshSoilMaterial = new THREE.MeshStandardMaterial({ color: 0x94663a, roughness: 1 });
+  const pitMaterial = new THREE.MeshStandardMaterial({ color: 0x38281f, roughness: 1 });
+
+  group.add(
+    createGroundPatch(
+      [
+        [-3.65, -0.55],
+        [-3.2, -1.18],
+        [-1.65, -1.34],
+        [-0.25, -1.18],
+        [1.25, -1.35],
+        [3.18, -1.08],
+        [3.62, -0.38],
+        [3.38, 0.8],
+        [2.2, 1.24],
+        [0.55, 1.12],
+        [-1.1, 1.3],
+        [-2.85, 1.03],
+        [-3.72, 0.35],
+      ],
+      soilMaterial,
+      0.072,
+    ),
+  );
+
+  // Koyu merkez ve etrafındaki yığınlar gerçek geometriyi delmeden çukur hissi verir.
+  group.add(
+    createGroundPatch(
+      [
+        [-2.45, -0.45],
+        [-1.6, -0.76],
+        [-0.2, -0.67],
+        [1.05, -0.82],
+        [2.48, -0.38],
+        [2.28, 0.42],
+        [0.9, 0.66],
+        [-0.5, 0.55],
+        [-1.85, 0.72],
+        [-2.58, 0.25],
+      ],
+      pitMaterial,
+      0.078,
+    ),
+  );
+
+  const moundGeometry = new THREE.DodecahedronGeometry(0.58, 0);
+  for (const [x, z, sx, sz] of [
+    [-2.75, 0.72, 1.25, 0.72],
+    [-1.75, 0.98, 0.92, 0.58],
+    [2.55, -0.68, 1.18, 0.7],
+    [3.0, 0.42, 0.82, 0.56],
+  ] as const) {
+    const mound = new THREE.Mesh(moundGeometry, freshSoilMaterial);
+    mound.position.set(x, 0.23, z);
+    mound.scale.set(sx, 0.34, sz);
+    mound.rotation.y = x * 0.31;
+    mound.castShadow = true;
+    mound.receiveShadow = true;
+    group.add(mound);
+  }
+
+  const stoneGeometry = new THREE.DodecahedronGeometry(0.12, 0);
+  const stoneMaterial = new THREE.MeshStandardMaterial({ color: 0x655b4d, roughness: 1 });
+  for (const [x, z, scale] of [
+    [-2.15, -0.92, 1],
+    [-0.75, 0.88, 0.8],
+    [1.75, 0.92, 1.15],
+    [2.25, -1.02, 0.72],
+  ] as const) {
+    const stone = new THREE.Mesh(stoneGeometry, stoneMaterial);
+    stone.position.set(x, 0.15, z);
+    stone.scale.setScalar(scale);
+    stone.castShadow = true;
+    group.add(stone);
+  }
+
+  const conePrototype = createConstructionCone();
+  for (const [x, z, rotation] of [
+    [-3.65, -1.35, -0.12],
+    [-1.25, -1.55, 0.08],
+    [1.35, -1.52, -0.06],
+    [3.62, -1.2, 0.1],
+    [-3.72, 1.25, 0.08],
+    [-0.45, 1.5, -0.08],
+    [3.55, 1.22, 0.12],
+  ] as const) {
+    const cone = conePrototype.clone(true);
+    cone.position.set(x, 0, z);
+    cone.rotation.y = rotation;
+    group.add(cone);
+  }
+
+  const frontBarrier = createConstructionBarrier();
+  frontBarrier.position.set(1.6, 0, 1.48);
+  frontBarrier.rotation.y = 0.05;
+  group.add(frontBarrier);
+
+  const sideBarrier = createConstructionBarrier();
+  sideBarrier.position.set(-3.75, 0, -0.05);
+  sideBarrier.rotation.y = Math.PI / 2;
+  group.add(sideBarrier);
+
+  // Temel için bırakılmış birkaç kısa donatı çubuğu.
+  const rebarGeometry = new THREE.CylinderGeometry(0.025, 0.025, 0.72, 6);
+  const rebarMaterial = new THREE.MeshStandardMaterial({
+    color: 0x4a3d35,
+    roughness: 0.82,
+    metalness: 0.35,
+  });
+  for (const [x, z] of [[-1.1, 0.05], [-0.92, 0.2], [0.95, -0.12]] as const) {
+    const rebar = new THREE.Mesh(rebarGeometry, rebarMaterial);
+    rebar.position.set(x, 0.4, z);
+    rebar.castShadow = true;
+    group.add(rebar);
+  }
+
+  return group;
+}
+
+/** Çevre cezaları ve kaçak satışlardan sonra girişte beliren hafif protesto kalabalığı. */
+function createProtestGroup(): THREE.Group {
+  const crowd = new THREE.Group();
+  const skin = new THREE.MeshStandardMaterial({ color: 0xd6a276, roughness: 0.88 });
+  const trouser = new THREE.MeshStandardMaterial({ color: 0x303842, roughness: 0.92 });
+  const sign = new THREE.MeshStandardMaterial({ color: 0xe8ddbc, roughness: 0.94 });
+  const ink = new THREE.MeshStandardMaterial({ color: 0x3d714b, roughness: 0.8 });
+  const stick = new THREE.MeshStandardMaterial({ color: 0x785436, roughness: 0.9 });
+  const shirtColors = [0xb74942, 0x3e6f9b, 0xd18b2f, 0x687c48, 0x76528f] as const;
+
+  for (const [index, position] of ([
+    [-0.7, 0.28],
+    [0.05, -0.08],
+    [0.78, 0.35],
+    [-0.15, 0.72],
+    [0.65, 0.98],
+  ] as const).entries()) {
+    const person = new THREE.Group();
+    person.position.set(position[0], 0, position[1]);
+    person.rotation.y = -0.28;
+    person.userData.protestOffset = index * 1.37;
+
+    const shirt = new THREE.MeshStandardMaterial({
+      color: shirtColors[index] ?? 0x687c48,
+      roughness: 0.9,
+    });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.48, 0.2), shirt);
+    body.position.y = 0.72;
+    body.castShadow = true;
+    person.add(body);
+
+    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.15, 1), skin);
+    head.position.y = 1.12;
+    head.castShadow = true;
+    person.add(head);
+
+    for (const x of [-0.085, 0.085]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.38, 0.11), trouser);
+      leg.position.set(x, 0.3, 0);
+      leg.castShadow = true;
+      person.add(leg);
+    }
+
+    const pole = new THREE.Mesh(new THREE.BoxGeometry(0.035, 1.02, 0.035), stick);
+    pole.position.set(0.24, 1.17, 0.04);
+    pole.rotation.z = -0.08;
+    person.add(pole);
+
+    const placard = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.42, 0.055), sign);
+    placard.position.set(0.2, 1.62, 0.04);
+    placard.castShadow = true;
+    person.add(placard);
+
+    for (const y of [1.68, 1.56]) {
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.045, 0.062), ink);
+      stripe.position.set(0.2, y, 0.012);
+      person.add(stripe);
+    }
+
+    crowd.add(person);
+  }
+
+  crowd.scale.setScalar(0.92);
+  return crowd;
+}
+
+/** Düşük fiyatta stoklama yatırımının sahadaki dört büyük tanklık karşılığı. */
+function createStorageTankSite(): THREE.Group {
+  const site = new THREE.Group();
+  const shell = new THREE.MeshStandardMaterial({
+    color: 0xadb3b1,
+    roughness: 0.62,
+    metalness: 0.42,
+  });
+  const darkMetal = new THREE.MeshStandardMaterial({
+    color: 0x444d50,
+    roughness: 0.72,
+    metalness: 0.35,
+  });
+  const warning = new THREE.MeshStandardMaterial({
+    color: 0xd69232,
+    roughness: 0.78,
+  });
+  const concrete = new THREE.MeshStandardMaterial({ color: 0x83847e, roughness: 0.96 });
+
+  for (const [index, [x, z]] of ([
+    [-0.72, 0],
+    [0.72, -0.22],
+    [-0.72, -2.15],
+    [0.72, -2.37],
+  ] as const).entries()) {
+    const tank = new THREE.Group();
+    tank.position.set(x, 0, z);
+
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(1.03, 1.08, 0.12, 16), concrete);
+    pad.position.y = 0.08;
+    pad.receiveShadow = true;
+    tank.add(pad);
+
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.82, 0.86, 1.48, 16), shell);
+    body.position.y = 0.86;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    tank.add(body);
+
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(0.84, 0.28, 16), darkMetal);
+    roof.position.y = 1.74;
+    roof.castShadow = true;
+    tank.add(roof);
+
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.835, 0.035, 6, 16), warning);
+    band.position.y = 1.08;
+    band.rotation.x = Math.PI / 2;
+    tank.add(band);
+
+    const ladderRailGeometry = new THREE.BoxGeometry(0.035, 1.32, 0.035);
+    for (const railX of [-0.11, 0.11]) {
+      const rail = new THREE.Mesh(ladderRailGeometry, darkMetal);
+      rail.position.set(railX, 0.92, 0.86);
+      tank.add(rail);
+    }
+    for (let rung = 0; rung < 6; rung += 1) {
+      const step = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.025, 0.035), darkMetal);
+      step.position.set(0, 0.37 + rung * 0.22, 0.86);
+      tank.add(step);
+    }
+
+    tank.rotation.y = index % 2 === 0 ? -0.18 : 0.16;
+    tank.visible = false;
+    site.add(tank);
+  }
+
+  return site;
 }
 
 function createBush(scale = 1): THREE.Group {
@@ -1288,7 +3173,7 @@ function createCat(): THREE.Group {
   return group;
 }
 
-/** Üstü açık araçtan yayılan, ses yerine kullanılan mobil dostu bas halkaları. */
+/** Synth loop ile aynı ritimde yayılan mobil dostu bass halkaları. */
 function createBassEffect(): THREE.Group {
   const group = new THREE.Group();
   group.position.y = 0.08;
