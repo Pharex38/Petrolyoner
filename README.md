@@ -22,8 +22,8 @@ kazandığın parayla yeni pompa aç. Kuş bakışı 3B, dikey mobil ekran için
 ## Çalıştırma
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Tarayıcıda `http://localhost:5173`. Aynı ağdaki telefondan test için terminalde yazan
@@ -31,10 +31,10 @@ Tarayıcıda `http://localhost:5173`. Aynı ağdaki telefondan test için termin
 
 | Komut | İş |
 |---|---|
-| `npm run dev` | Geliştirme sunucusu (HMR) |
-| `npm run build` | Tip kontrolü + production build (`dist/`) |
-| `npm run preview` | Build çıktısını yerelde sun |
-| `npm run typecheck` | Sadece tip kontrolü |
+| `pnpm dev` | Geliştirme sunucusu (HMR) |
+| `pnpm build` | Tip kontrolü + production build (`dist/`) |
+| `pnpm preview` | Build çıktısını yerelde sun |
+| `pnpm typecheck` | Sadece tip kontrolü |
 
 ## Klasör yapısı
 
@@ -76,7 +76,7 @@ __petrolyoner.station.cars            // sahadaki araçlar
 
 `step()` özellikle işe yarar: sekme arka plandayken tarayıcı
 `requestAnimationFrame`'i durdurur, bu yüzden otomatik testte oyun bununla sürülür.
-Bu kancaların tamamı sadece `npm run dev` sırasında var, production build'e girmez.
+Bu kancaların tamamı sadece `pnpm dev` sırasında var, production build'e girmez.
 
 ## Dokümanlar
 

@@ -15,6 +15,10 @@ const station = new Station();
 const world = new World(viewport);
 const hud = new Hud(station);
 
+// Müşteriler görünmez biçimde üretilmez: ana yoldan geçen gerçek bir NPC araç
+// girişe ulaştığında istasyon, boş pompa varsa o aracı devralır.
+world.onTrafficCarAtEntrance = (color) => station.acceptTrafficCar(color);
+
 // --- Geri bildirim ---
 
 station.onServed = (car) => {
@@ -82,6 +86,7 @@ let lastFrameTime = performance.now();
 /** Tek bir kare: oyun mantığını ilerlet, sahneyi ve arayüzü tazele. */
 function step(delta: number): void {
   station.tick(delta);
+  world.updateTraffic(delta);
 
   for (const slot of station.slots) {
     world.islands.get(slot.index)?.setUnlocked(station.isUnlocked(slot.index));

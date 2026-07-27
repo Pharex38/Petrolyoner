@@ -29,9 +29,8 @@ export const SLOTS: readonly SlotDefinition[] = [
   { index: 5, pumpX: RIGHT_PUMP_X, carX: RIGHT_CAR_X, z: -3.2, unlockCost: 110000 },
 ];
 
-/** Arabaların istasyona girdiği ve çıktığı noktalar. */
+/** Müşteri araçlarının ana yoldan istasyon şeridine döndüğü kavşak. */
 export const ENTRY_Z = 10;
-export const EXIT_Z = -10;
 export const LANE_X = 0;
 
 export function findSlot(index: number): SlotDefinition | undefined {

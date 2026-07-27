@@ -5,16 +5,16 @@ import { SLOTS, findSlot } from './slots';
 import type { PlayerData } from './state';
 import { createNewGame, nowUnixSeconds } from './state';
 
-/** Araba giriş yolunu kat ederken geçen süre. */
+/** Trafikten istasyondaki pompaya ulaşma süresi. */
 const ARRIVE_SECONDS = 2.4;
-/** Araba çıkarken geçen süre. */
+/** Pompadan tekrar ana yola katılma süresi. */
 const LEAVE_SECONDS = 2.2;
 /** Yakıt doldurma süresi. */
 const FILL_SECONDS = 2.6;
 /** Müşterinin bekleyebileceği süre. Bitince kızıp gider. */
 const PATIENCE_SECONDS = 24;
-/** İki araba arasındaki süre. Boş pompa yoksa araba gelmez. */
-const SPAWN_INTERVAL_SECONDS = 5.5;
+/** Trafikten yeni bir müşterinin ayrılabilmesi için gereken en kısa süre. */
+const TRAFFIC_CUSTOMER_COOLDOWN_SECONDS = 5.5;
 
 /** Gece vardiyası: kapalıyken pompa başına saniyelik kazanç. */
 const OFFLINE_PER_PUMP_PER_SECOND = 2;
@@ -22,8 +22,6 @@ const MAX_OFFLINE_HOURS = 4;
 const OFFLINE_REPORT_THRESHOLD_SECONDS = 60;
 
 const AUTOSAVE_SECONDS = 15;
-
-const CAR_COLORS = [0xd94f4f, 0x3d76c9, 0xe8e6e1, 0x2f2f33, 0x4fae6d, 0xe0a53a, 0x8a5fc4];
 
 export type CarPhase = 'arriving' | 'waiting' | 'filling' | 'leaving';
 
@@ -63,7 +61,7 @@ export class Station {
   onMissed: ((car: Car) => void) | null = null;
 
   private nextCarId = 1;
-  private spawnTimer = SPAWN_INTERVAL_SECONDS * 0.4;
+  private trafficCustomerCooldown = TRAFFIC_CUSTOMER_COOLDOWN_SECONDS * 0.3;
   private autosaveTimer = 0;
 
   constructor() {
@@ -128,7 +126,7 @@ export class Station {
   }
 
   tick(deltaSeconds: number): void {
-    this.updateSpawning(deltaSeconds);
+    this.trafficCustomerCooldown = Math.max(0, this.trafficCustomerCooldown - deltaSeconds);
 
     for (const car of [...this.cars.values()]) {
       this.updateCar(car, deltaSeconds);
@@ -141,30 +139,36 @@ export class Station {
     }
   }
 
-  private updateSpawning(deltaSeconds: number): void {
-    this.spawnTimer -= deltaSeconds;
-    if (this.spawnTimer > 0) return;
-
-    this.spawnTimer = SPAWN_INTERVAL_SECONDS;
+  /**
+   * Ana yoldan ayrılmak isteyen bir NPC'yi oyun müşterisine çevirir.
+   * Görsel katman bu çağrıdan sonra aynı araç mesh'ini pompaya taşır; yeni
+   * bir araç yaratılmaz.
+   */
+  acceptTrafficCar(color: number): Car | null {
+    if (this.trafficCustomerCooldown > 0) return null;
 
     const free = this.data.unlockedSlots.filter((index) => !this.cars.has(index));
-    if (free.length === 0) return;
+    if (free.length === 0) return null;
 
     const slotIndex = free[Math.floor(Math.random() * free.length)];
-    if (slotIndex === undefined) return;
+    if (slotIndex === undefined) return null;
 
-    this.cars.set(slotIndex, {
+    const car: Car = {
       id: this.nextCarId++,
       slotIndex,
       fuel: randomFuel(),
       amount: randomAmount(),
-      color: CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)] ?? 0xd94f4f,
+      color,
       phase: 'arriving',
       progress: 0,
       patience: PATIENCE_SECONDS,
       fillProgress: 0,
       angry: false,
-    });
+    };
+
+    this.cars.set(slotIndex, car);
+    this.trafficCustomerCooldown = TRAFFIC_CUSTOMER_COOLDOWN_SECONDS;
+    return car;
   }
 
   private updateCar(car: Car, deltaSeconds: number): void {

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Petrol sahibi simülasyonu / idle tycoon oyunu.",
   "private": true,
+  "packageManager": "pnpm@11.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
