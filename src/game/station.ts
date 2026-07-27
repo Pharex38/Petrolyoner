@@ -75,6 +75,10 @@ export interface Car {
   readonly rescued: boolean;
   /** Çekici üzerindeyken normal istasyon rotası bu aracı ilerletmez. */
   deliveryPending: boolean;
+  /** Pompadan gerçekten çıkan yakıt; sipariş tutarından fazlası işletme zararıdır. */
+  dispensedLiters: number;
+  /** Müşterinin ödemediği, fazla verilmiş yakıt miktarı. */
+  wastedLiters: number;
 }
 
 export type ServeResult =
@@ -286,22 +290,30 @@ export class Station {
   }
 
   /**
-   * Seçilen yakıt ve tutarla arabayı doldurmayı dener.
-   * İkisi de siparişe uymazsa müşteri kızıp gider — para yok.
+   * Seçilen yakıt ve pompadan gerçekten geçen tutarla arabayı doldurmayı dener.
+   * Fazla dolumda müşteri yalnızca siparişini öder; fazla litre stoktan düşer
+   * ve işletme zararı olarak car.wastedLiters içinde kalır.
    */
-  serve(slotIndex: number, fuel: FuelType, amount: number): ServeResult {
+  serve(slotIndex: number, fuel: FuelType, dispensedAmount: number): ServeResult {
     const car = this.cars.get(slotIndex);
     if (car === undefined || car.phase !== 'waiting') return 'unavailable';
 
-    if (car.fuel !== fuel || car.amount !== amount) {
+    if (car.fuel !== fuel || dispensedAmount < car.amount) {
       this.sendAway(car, true);
       return 'wrong';
     }
     if (this.isFuelRestocking(car.fuel)) return 'restocking';
-    const liters = litersForAmount(car.fuel, car.amount, car.unitPrice);
+    const chargedLiters = litersForAmount(car.fuel, car.amount, car.unitPrice);
+    const liters = litersForAmount(
+      car.fuel,
+      Math.max(car.amount, Math.round(dispensedAmount)),
+      car.unitPrice,
+    );
     if (this.data.fuelStock[car.fuel] < liters) return 'out-of-stock';
 
     this.data.fuelStock[car.fuel] = Math.max(0, this.data.fuelStock[car.fuel] - liters);
+    car.dispensedLiters = liters;
+    car.wastedLiters = Math.max(0, liters - chargedLiters);
     car.phase = 'filling';
     car.fillProgress = 0;
     return 'ok';
@@ -379,6 +391,8 @@ export class Station {
       angry: false,
       rescued,
       deliveryPending: rescued,
+      dispensedLiters: 0,
+      wastedLiters: 0,
     };
 
     this.cars.set(slotIndex, car);
@@ -421,8 +435,7 @@ export class Station {
           this.data.money += car.amount;
           this.data.totalEarned += car.amount;
           this.data.servedCars += 1;
-          const liters = litersForAmount(car.fuel, car.amount, car.unitPrice);
-          this.management.recordFuelSale(liters);
+          this.management.recordFuelSale(car.dispensedLiters);
           this.onServed?.(car);
           this.tryMarketSale(car);
           this.sendAway(car, false);

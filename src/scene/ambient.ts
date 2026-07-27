@@ -11,6 +11,22 @@ interface BirdFlight {
   elapsed: number;
 }
 
+interface NestDelivery {
+  readonly twig: THREE.Group;
+  elapsed: number;
+}
+
+interface StorkNest {
+  readonly anchor: THREE.Vector3;
+  readonly nest: THREE.Group;
+  readonly stork: ReturnType<typeof createStork>;
+  readonly twigGeometry: THREE.CylinderGeometry;
+  readonly twigMaterial: THREE.MeshStandardMaterial;
+  branchCount: number;
+  nextDeliveryIn: number;
+  delivery: NestDelivery | null;
+}
+
 /** Yağmur çizgisi ile gerçek hareket aynı vektörü kullanır; ekranda kaymaz. */
 const RAIN_WIND_X = 3.1;
 const RAIN_WIND_Z = -1.55;
@@ -18,6 +34,11 @@ const RAIN_STREAK_SECONDS = 0.082;
 
 function randomBetween(min: number, max: number): number {
   return min + Math.random() * (max - min);
+}
+
+function smooth(value: number): number {
+  const clamped = Math.max(0, Math.min(1, value));
+  return clamped * clamped * (3 - 2 * clamped);
 }
 
 function createWing(
@@ -144,6 +165,9 @@ export class AmbientSystem {
   private readonly rainSpeeds: Float32Array;
   private readonly rainMaterial: THREE.LineBasicMaterial;
   private readonly streetLights: THREE.PointLight[] = [];
+  private readonly streetLightPools: THREE.MeshBasicMaterial[] = [];
+  private readonly puddles: THREE.Mesh[] = [];
+  private readonly puddleMaterials: THREE.MeshBasicMaterial[] = [];
   private readonly flockVisual = createBirdFlock();
   private readonly storkVisual = createStork();
   private readonly lampMaterial = new THREE.MeshStandardMaterial({
@@ -153,10 +177,13 @@ export class AmbientSystem {
     roughness: 0.58,
   });
   private birdFlight: BirdFlight | null = null;
+  private storkNest: StorkNest | null = null;
   private nextBirdIn = randomBetween(5, 10);
   private weatherTimer = randomBetween(20, 38);
   private rainTarget = 0;
   private rainLevel = 0;
+  private puddleLevel = 0;
+  private elapsed = 0;
 
   constructor(
     roadX: number,
@@ -189,6 +216,7 @@ export class AmbientSystem {
     this.rain.renderOrder = 8;
     this.group.add(this.rain);
 
+    this.addRoadPuddles(roadX, roadWidth);
     this.addStreetLights(roadX, roadWidth);
   }
 
@@ -205,6 +233,7 @@ export class AmbientSystem {
   }
 
   update(deltaSeconds: number): void {
+    this.elapsed += deltaSeconds;
     this.updateWeather(deltaSeconds);
     this.updateBirds(deltaSeconds);
   }
@@ -213,7 +242,13 @@ export class AmbientSystem {
     const nightStrength = 1 - Math.max(0, Math.min(1, daylight));
     this.lampMaterial.emissiveIntensity = 0.05 + nightStrength * 2.4;
     for (const light of this.streetLights) {
-      light.intensity = nightStrength * 8.5;
+      light.intensity = nightStrength * 14;
+    }
+    for (const material of this.streetLightPools) {
+      material.opacity = nightStrength * 0.31;
+    }
+    for (const material of this.puddleMaterials) {
+      material.color.setHex(daylight < 0.34 ? 0x774f2f : 0x638b9d);
     }
   }
 
@@ -241,6 +276,11 @@ export class AmbientSystem {
 
     this.rainMaterial.opacity =
       this.rainLevel * (this.reduceMotion ? 0.22 : 0.36);
+    const puddleTarget = this.rainTarget > 0 || this.rainLevel > 0.16 ? 1 : 0;
+    const puddleResponse = puddleTarget > this.puddleLevel ? 0.19 : 0.028;
+    this.puddleLevel +=
+      (puddleTarget - this.puddleLevel) * Math.min(1, deltaSeconds * puddleResponse);
+    this.updatePuddles();
     if (!this.rain.visible) return;
 
     const position = this.rainPositions;
@@ -281,6 +321,7 @@ export class AmbientSystem {
   }
 
   private updateBirds(deltaSeconds: number): void {
+    this.updateStorkNest(deltaSeconds);
     const flight = this.birdFlight;
     if (flight === null) {
       this.nextBirdIn -= deltaSeconds;
@@ -336,6 +377,181 @@ export class AmbientSystem {
     };
   }
 
+  /** Yağmur sonrası asfaltta yavaşça kaybolan, düşük maliyetli su birikintileri. */
+  private addRoadPuddles(roadX: number, roadWidth: number): void {
+    const puddleGeometry = new THREE.CircleGeometry(0.58, 14);
+    for (const [xOffset, z, scaleX, scaleZ] of [
+      [-0.58, -17.5, 0.92, 1.55],
+      [0.56, -9.8, 0.68, 1.2],
+      [-0.2, -1.5, 1.05, 0.8],
+      [0.52, 7.6, 0.78, 1.36],
+      [-0.5, 18.2, 1.14, 0.75],
+    ] as const) {
+      const material = new THREE.MeshBasicMaterial({
+        color: 0x638b9d,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+      const puddle = new THREE.Mesh(puddleGeometry, material);
+      puddle.rotation.x = -Math.PI / 2;
+      puddle.position.set(
+        roadX + Math.max(-roadWidth * 0.28, Math.min(roadWidth * 0.28, xOffset)),
+        0.092,
+        z,
+      );
+      puddle.scale.set(scaleX, scaleZ, 1);
+      puddle.visible = false;
+      puddle.renderOrder = 1;
+      this.puddles.push(puddle);
+      this.puddleMaterials.push(material);
+      this.group.add(puddle);
+    }
+  }
+
+  private updatePuddles(): void {
+    const visible = this.puddleLevel > 0.025;
+    for (const [index, puddle] of this.puddles.entries()) {
+      puddle.visible = visible;
+      const material = this.puddleMaterials[index];
+      if (material === undefined) continue;
+      const ripple = this.reduceMotion ? 0 : Math.sin(this.elapsed * 1.8 + index * 1.93) * 0.035;
+      material.opacity = this.puddleLevel * (0.17 + (index % 2) * 0.045 + ripple);
+    }
+  }
+
+  /** Aynı lambaya düzenli uğrayan leylek, dal bıraktıkça görünür bir yuva örer. */
+  private addStorkNest(lampX: number, z: number): void {
+    const root = new THREE.Group();
+    const anchor = new THREE.Vector3(lampX, 3.63, z);
+    root.position.copy(anchor);
+
+    const twigMaterial = new THREE.MeshStandardMaterial({
+      color: 0x69442a,
+      roughness: 0.96,
+    });
+    const nest = new THREE.Group();
+    root.add(nest);
+
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.34, 0.038, 5, 14),
+      twigMaterial,
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.scale.set(1.18, 0.82, 1);
+    nest.add(ring);
+
+    this.group.add(root);
+    this.storkNest = {
+      anchor,
+      nest,
+      stork: createStork(),
+      twigGeometry: new THREE.CylinderGeometry(0.018, 0.026, 1, 5),
+      twigMaterial,
+      branchCount: 0,
+      nextDeliveryIn: randomBetween(8, 14),
+      delivery: null,
+    };
+    this.storkNest.stork.root.scale.setScalar(0.48);
+    this.storkNest.stork.root.visible = false;
+    this.group.add(this.storkNest.stork.root);
+  }
+
+  private createNestTwig(nest: StorkNest, branchIndex: number): THREE.Group {
+    const twig = new THREE.Group();
+    const length = 0.48 + (branchIndex % 4) * 0.1;
+    const branch = new THREE.Mesh(nest.twigGeometry, nest.twigMaterial);
+    branch.scale.y = length;
+    branch.rotation.z = Math.PI / 2;
+    twig.rotation.y = branchIndex * 1.71 + 0.3;
+    twig.position.copy(this.nestTwigPosition(branchIndex));
+    branch.castShadow = true;
+    twig.add(branch);
+    return twig;
+  }
+
+  private nestTwigPosition(branchIndex: number): THREE.Vector3 {
+    const angle = branchIndex * 1.71;
+    const radius = 0.08 + (branchIndex % 3) * 0.075;
+    return new THREE.Vector3(
+      Math.cos(angle) * radius,
+      0.045 + Math.floor(branchIndex / 5) * 0.026,
+      Math.sin(angle) * radius,
+    );
+  }
+
+  private startStorkNestDelivery(nest: StorkNest): void {
+    const stork = nest.stork;
+    stork.root.position.set(nest.anchor.x - 10.5, nest.anchor.y + 3.3, nest.anchor.z + 2.8);
+    stork.root.rotation.y = 0;
+    stork.root.visible = true;
+    for (const wing of stork.wings) wing.rotation.x = 0;
+
+    const twig = this.createNestTwig(nest, nest.branchCount + 1);
+    twig.position.copy(stork.root.position).add(new THREE.Vector3(0.45, -0.05, 0));
+    this.group.add(twig);
+    nest.delivery = { twig, elapsed: 0 };
+  }
+
+  private updateStorkNest(deltaSeconds: number): void {
+    const nest = this.storkNest;
+    if (nest === null) return;
+    const delivery = nest.delivery;
+    if (delivery === null) {
+      nest.nextDeliveryIn -= deltaSeconds;
+      if (nest.nextDeliveryIn <= 0) this.startStorkNestDelivery(nest);
+      return;
+    }
+
+    delivery.elapsed += deltaSeconds;
+    const stork = nest.stork;
+    const start = new THREE.Vector3(nest.anchor.x - 10.5, nest.anchor.y + 3.3, nest.anchor.z + 2.8);
+    const hover = new THREE.Vector3(nest.anchor.x + 0.18, nest.anchor.y + 1.38, nest.anchor.z - 0.34);
+    const exit = new THREE.Vector3(nest.anchor.x + 9.5, nest.anchor.y + 4.1, nest.anchor.z - 2.5);
+    const flap = this.reduceMotion ? 0.08 : Math.sin(delivery.elapsed * 4.1) * 0.35;
+    for (let index = 0; index < stork.wings.length; index += 1) {
+      const wing = stork.wings[index];
+      if (wing !== undefined) wing.rotation.x = flap * (index % 2 === 0 ? -1 : 1);
+    }
+
+    if (delivery.elapsed < 2.5) {
+      stork.root.position.lerpVectors(start, hover, smooth(delivery.elapsed / 2.5));
+      stork.root.rotation.y = 0;
+      delivery.twig.position.copy(stork.root.position).add(new THREE.Vector3(0.5, -0.08, 0));
+      return;
+    }
+
+    const landingLocal = this.nestTwigPosition(nest.branchCount + 1);
+    const landing = nest.anchor.clone().add(landingLocal);
+    if (delivery.elapsed < 3.12) {
+      stork.root.position.copy(hover);
+      const drop = smooth((delivery.elapsed - 2.5) / 0.62);
+      delivery.twig.position.lerpVectors(
+        hover.clone().add(new THREE.Vector3(0.5, -0.08, 0)),
+        landing,
+        drop,
+      );
+      return;
+    }
+
+    if (delivery.twig.parent === this.group) {
+      this.group.remove(delivery.twig);
+      nest.nest.add(delivery.twig);
+      delivery.twig.position.copy(landingLocal);
+      nest.branchCount += 1;
+    }
+
+    if (delivery.elapsed < 5.5) {
+      stork.root.position.lerpVectors(hover, exit, smooth((delivery.elapsed - 3.12) / 2.38));
+      stork.root.rotation.y = Math.PI;
+      return;
+    }
+
+    stork.root.visible = false;
+    nest.delivery = null;
+    nest.nextDeliveryIn = randomBetween(20, 38);
+  }
+
   private addStreetLights(roadX: number, roadWidth: number): void {
     const poleMaterial = new THREE.MeshStandardMaterial({
       color: 0x4d555b,
@@ -374,14 +590,33 @@ export class AmbientSystem {
       head.castShadow = false;
       this.group.add(head);
 
+      // Gerçek ışık maliyetini artırmadan, her lambanın dibinde okunur sıcak
+      // bir aydınlık halkası bırak. Gece yağmurunda da yol yüzeyi okunur.
+      const poolMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff9c4a,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+      const pool = new THREE.Mesh(new THREE.CircleGeometry(1.08, 18), poolMaterial);
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.set(lampX, 0.101, z);
+      pool.scale.set(0.82, 1.38, 1);
+      pool.renderOrder = 2;
+      this.streetLightPools.push(poolMaterial);
+      this.group.add(pool);
+
       // Her direğe ayrı ışık pahalıdır; görünürlük için seçilmiş dört direk yeterli.
       if (index % 2 === 0) {
-        const light = new THREE.PointLight(0xffd787, 0, 6.4, 1.9);
+        const light = new THREE.PointLight(0xffa04d, 0, 7.8, 1.65);
         light.position.set(lampX, 3.34, z);
         light.castShadow = false;
         this.streetLights.push(light);
         this.group.add(light);
       }
+
+      // Sabit yuva noktası kameranın gördüğü orta yola yakın seçilir.
+      if (index === 4) this.addStorkNest(lampX, z);
     }
   }
 }

@@ -38,8 +38,13 @@ export const SLOTS: readonly SlotDefinition[] = [
 export const ENTRY_Z = 11.5;
 /** Servisi biten araçların ayrı bir kapıdan ana yola katıldığı kavşak. */
 export const EXIT_Z = -9.2;
-/** Sonradan kurulabilen marketin ve başlangıç şantiyesinin merkez noktası. */
-export const MARKET_Z = -13.2;
+/**
+ * Sonradan kurulabilen market ve şantiyesi, ana araç koridorundan ayrı sol
+ * servis cebinde durur. Böylece ne kazı alanı ne de bina sürüş çizgilerini
+ * keser.
+ */
+export const MARKET_X = -5.05;
+export const MARKET_Z = -9.8;
 export const LANE_X = 0;
 
 export function findSlot(index: number): SlotDefinition | undefined {

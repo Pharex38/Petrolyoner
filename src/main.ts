@@ -1,6 +1,7 @@
 import './style.css';
 
 import { SoundManager } from './audio/sound';
+import { findFuel } from './game/fuel';
 import { formatMoney } from './game/format';
 import { Station } from './game/station';
 import { World } from './scene/world';
@@ -47,6 +48,15 @@ station.onServed = (car) => {
   if (screen === null) return;
 
   hud.spawnFloater(`+${formatMoney(car.amount)}`, screen.x, screen.y);
+  if (car.wastedLiters > 0.01) {
+    const wastedCost = Math.round(car.wastedLiters * findFuel(car.fuel).wholesalePerLiter);
+    hud.spawnFloater(
+      `-${formatMoney(wastedCost)} fazla yakıt`,
+      screen.x,
+      screen.y + 24,
+      true,
+    );
+  }
 };
 
 station.onArrived = () => {

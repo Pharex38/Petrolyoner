@@ -618,7 +618,7 @@ export class Hud {
     this.targetPulsePlayed = false;
     nozzle?.classList.add('holding');
     nozzle?.setAttribute('aria-pressed', 'true');
-    this.fillConsole.classList.remove('error', 'success');
+    this.fillConsole.classList.remove('error', 'success', 'overfilled');
     this.fillConsole.classList.add('filling');
     this.fillHint.textContent = 'Basılı tut… yeşil hedefte bırak';
 
@@ -643,7 +643,9 @@ export class Hud {
     }
 
     if (this.fillAmount >= FILL_GAUGE_MAX) {
-      this.failFillInteraction('Fazla doldurdun, tekrar dene');
+      // Sayaç sonuna kadar tutulursa yakıt çöpe gitmez: müşteri siparişi kadar
+      // öder, kalan fiziksel yakıt ise stoktan zarar olarak düşer.
+      this.finishFillInteraction();
       return;
     }
 
@@ -660,29 +662,35 @@ export class Hud {
     }
 
     const correctFuel = this.selectedFuel === car.fuel;
-    const correctAmount = Math.abs(this.fillAmount - car.amount) <= TARGET_TOLERANCE;
+    const tooEarly = this.fillAmount < car.amount - TARGET_TOLERANCE;
+    const overfilled = this.fillAmount > car.amount + TARGET_TOLERANCE;
     if (!correctFuel) {
       this.failFillInteraction('Yanlış nozul — renge dikkat et');
       return;
     }
-    if (!correctAmount) {
-      this.failFillInteraction(this.fillAmount < car.amount ? 'Erken bıraktın' : 'Hedefi geçtin');
+    if (tooEarly) {
+      this.failFillInteraction('Erken bıraktın');
       return;
     }
 
     const slotIndex = this.openSlot;
     const fuel = this.selectedFuel;
+    const dispensedAmount = overfilled
+      ? Math.round(this.fillAmount)
+      : car.amount;
     this.stopFillAnimation();
     this.fillConsole.classList.remove('filling', 'on-target');
-    this.fillConsole.classList.add('success');
-    this.fillAmount = car.amount;
+    this.fillConsole.classList.add(overfilled ? 'overfilled' : 'success');
+    this.fillAmount = dispensedAmount;
     this.renderFillAmount();
-    this.fillHint.textContent = 'Tam isabet!';
-    navigator.vibrate?.([22, 32, 36]);
+    this.fillHint.textContent = overfilled
+      ? `Fazla ${formatMoney(dispensedAmount - car.amount)} verdin · müşteri sadece siparişini öder`
+      : 'Tam isabet!';
+    navigator.vibrate?.(overfilled ? [34, 18, 34] : [22, 32, 36]);
 
     this.feedbackTimer = window.setTimeout(() => {
       this.feedbackTimer = null;
-      this.onServe?.(slotIndex, fuel, car.amount);
+      this.onServe?.(slotIndex, fuel, dispensedAmount);
       this.closeSheets();
     }, 280);
   }
@@ -722,7 +730,7 @@ export class Hud {
     this.fillAmount = 0;
     this.selectedFuel = null;
     this.targetPulsePlayed = false;
-    this.fillConsole.classList.remove('filling', 'on-target', 'error', 'success');
+    this.fillConsole.classList.remove('filling', 'on-target', 'error', 'success', 'overfilled');
     this.fillConsole.classList.remove('direct');
     this.fillHint.textContent = 'Doğru nozula basılı tut, hedefte bırak';
     this.renderFillAmount();
