@@ -1,4 +1,4 @@
-import type { FuelType } from './fuel';
+import type { DemandLevel, FuelType } from './fuel';
 import {
   FUEL_CAPACITY_LITERS,
   FUEL_PRICE_STEP,
@@ -6,6 +6,7 @@ import {
   RESTOCK_BATCH_LITERS,
   AMOUNT_OPTIONS,
   clampFuelPrice,
+  demandLevel,
   findFuel,
   fuelDemandFactor,
   fuelDemandLabel,
@@ -29,6 +30,7 @@ import {
 } from './management';
 import { loadGame, saveGame } from './save';
 import { SLOTS, findSlot } from './slots';
+import type { TrafficSide } from './traffic';
 import type { PlayerData } from './state';
 import { createNewGame, nowUnixSeconds } from './state';
 
@@ -52,7 +54,33 @@ const MAX_OFFLINE_HOURS = 4;
 const OFFLINE_REPORT_THRESHOLD_SECONDS = 60;
 
 const AUTOSAVE_SECONDS = 15;
+
+/** İlk pompacının ücreti; her yeni pompacı bu katsayıyla pahalanır. */
+const ATTENDANT_BASE_COST = 25_000;
+const ATTENDANT_COST_GROWTH = 1.9;
+/**
+ * Pompacının kestiği pay. Maaş takibi yerine komisyon seçildi: otomasyonun
+ * bedeli sürekli ve kendiliğinden ölçeklenir, ayrıca elle servisi hep kârlı tutar.
+ */
+const ATTENDANT_COMMISSION = 0.2;
+/**
+ * Pompacının araca yönelme süresi. Oyuncu bu süre içinde kendisi doldurursa
+ * komisyon ödenmez — otomasyon rahatlık, elle servis kâr demek.
+ */
+const ATTENDANT_REACTION_SECONDS = 2.8;
 export const MARKET_BUILD_COST = 15_000;
+
+/**
+ * Talep göstergesinin "artıyor / azalıyor" okunu belirleyen referans çizgisi,
+ * anlık talebi bu zaman sabitiyle takip eder. Kısa tutarsan ok sürekli titrer,
+ * uzun tutarsan fiyat değişimini geç fark eder.
+ */
+const DEMAND_BASELINE_TAU_SECONDS = 14;
+
+/** Bu farkın altındaki oynamalar "sabit" sayılır — okun titremesini engeller. */
+const DEMAND_TREND_EPSILON = 0.015;
+
+export type DemandTrend = 'up' | 'down' | 'flat';
 
 export type CarPhase = 'arriving' | 'waiting' | 'filling' | 'leaving';
 
@@ -79,6 +107,12 @@ export interface Car {
   dispensedLiters: number;
   /** Müşterinin ödemediği, fazla verilmiş yakıt miktarı. */
   wastedLiters: number;
+  /** Pompacının araca yönelmesi için geçen süre. */
+  attendantTimer: number;
+  /** Servisi pompacı yaptıysa kasaya komisyon düşülmüş tutar girer. */
+  autoServed: boolean;
+  /** Bu servisten kasaya giren net tutar; arayüz bunu gösterir. */
+  payout: number;
 }
 
 export type ServeResult =
@@ -127,6 +161,9 @@ export class Station {
   private nextCarId = 1;
   private trafficCustomerCooldown = TRAFFIC_CUSTOMER_COOLDOWN_SECONDS * 0.3;
   private autosaveTimer = 0;
+
+  /** Talep trendinin karşılaştırıldığı yavaş referans; -1 = henüz ölçülmedi. */
+  private demandBaseline = -1;
 
   constructor() {
     this.data = loadGame() ?? createNewGame();
@@ -198,6 +235,108 @@ export class Station {
 
   fuelDemandLabel(fuel: FuelType): string {
     return fuelDemandLabel(fuel, this.fuelPriceOf(fuel));
+  }
+
+  // ---------- Pompacılar ----------
+
+  get attendantCount(): number {
+    return this.data.attendants;
+  }
+
+  /** Pompacı sayısı açık pompayı geçemez; boşta duran pompacı anlamsız olurdu. */
+  get canHireAttendant(): boolean {
+    return this.data.attendants < this.unlockedCount;
+  }
+
+  attendantCost(): number {
+    return Math.round(
+      ATTENDANT_BASE_COST * Math.pow(ATTENDANT_COST_GROWTH, this.data.attendants),
+    );
+  }
+
+  get attendantCommission(): number {
+    return ATTENDANT_COMMISSION;
+  }
+
+  tryHireAttendant(): boolean {
+    if (!this.canHireAttendant) return false;
+
+    const cost = this.attendantCost();
+    if (this.data.money < cost) return false;
+
+    this.data.money -= cost;
+    this.data.attendants += 1;
+    this.persist();
+    return true;
+  }
+
+  /** Pompacılar en küçük numaralı açık pompalardan başlayarak atanır. */
+  isSlotAutomated(slotIndex: number): boolean {
+    const rank = [...this.data.unlockedSlots].sort((a, b) => a - b).indexOf(slotIndex);
+    return rank >= 0 && rank < this.data.attendants;
+  }
+
+  // ---------- Trafik yönü ----------
+
+  get trafficSide(): TrafficSide {
+    return this.data.trafficSide;
+  }
+
+  /** Değişirse true döner; çağıran sahneyi yeniden yönlendirmeli. */
+  setTrafficSide(side: TrafficSide): boolean {
+    if (this.data.trafficSide === side) return false;
+
+    this.data.trafficSide = side;
+    this.persist();
+    return true;
+  }
+
+  // ---------- Müşteri talebi ----------
+
+  /** Üç yakıtın fiyat kaynaklı talep katsayısının ortalaması. */
+  private averageFuelDemand(): number {
+    return (
+      FUELS.reduce(
+        (total, fuel) => total + fuelDemandFactor(fuel.id, this.fuelPriceOf(fuel.id)),
+        0,
+      ) / FUELS.length
+    );
+  }
+
+  /**
+   * İstasyona sapma olasılığını belirleyen toplam talep. 1 = normal.
+   * Hem litre fiyatlarını hem yönetim etkilerini (protesto, itibar, rakip
+   * fiyat savaşı) içerir; acceptCustomer'ın attığı zarla aynı büyüklüktür.
+   */
+  customerDemand(): number {
+    return this.averageFuelDemand() * this.management.customerDemandMultiplier;
+  }
+
+  get customerDemandLevel(): DemandLevel {
+    return demandLevel(this.customerDemand());
+  }
+
+  /** Talep referans çizgisinin üstünde mi altında mı — gösterge oku için. */
+  get demandTrend(): DemandTrend {
+    if (this.demandBaseline < 0) return 'flat';
+
+    const delta = this.customerDemand() - this.demandBaseline;
+    if (delta > DEMAND_TREND_EPSILON) return 'up';
+    if (delta < -DEMAND_TREND_EPSILON) return 'down';
+    return 'flat';
+  }
+
+  private updateDemandBaseline(deltaSeconds: number): void {
+    const demand = this.customerDemand();
+
+    if (this.demandBaseline < 0) {
+      this.demandBaseline = demand;
+      return;
+    }
+
+    // Üstel yaklaşma: kare süresinden bağımsız, düşük fps'te de aynı hızda.
+    const factor = 1 - Math.exp(-deltaSeconds / DEMAND_BASELINE_TAU_SECONDS);
+    this.demandBaseline += (demand - this.demandBaseline) * factor;
   }
 
   marketPriceOf(item: MarketItemId): number {
@@ -322,6 +461,7 @@ export class Station {
   tick(deltaSeconds: number, activeServiceSlot: number | null = null): void {
     this.management.tick(deltaSeconds);
     this.trafficCustomerCooldown = Math.max(0, this.trafficCustomerCooldown - deltaSeconds);
+    this.updateDemandBaseline(deltaSeconds);
 
     for (const car of [...this.cars.values()]) {
       this.updateCar(car, deltaSeconds, activeServiceSlot);
@@ -393,6 +533,9 @@ export class Station {
       deliveryPending: rescued,
       dispensedLiters: 0,
       wastedLiters: 0,
+      attendantTimer: 0,
+      autoServed: false,
+      payout: 0,
     };
 
     this.cars.set(slotIndex, car);
@@ -422,6 +565,18 @@ export class Station {
         return;
 
       case 'waiting':
+        if (this.isSlotAutomated(car.slotIndex) && !car.deliveryPending) {
+          car.attendantTimer += deltaSeconds;
+          if (car.attendantTimer >= ATTENDANT_REACTION_SECONDS) {
+            car.autoServed = true;
+            if (this.serve(car.slotIndex, car.fuel, car.amount) !== 'ok') {
+              // Depo boş ya da tanker doluyor: pompacı da bekler, müşteri kaçabilir.
+              car.autoServed = false;
+              car.attendantTimer = 0;
+            }
+            return;
+          }
+        }
         // Oyuncu nozulun başındayken müşteri sabırsızlanıp dolumun ortasında kaçmaz.
         if (car.slotIndex === activeServiceSlot) return;
         car.patience -= deltaSeconds;
@@ -432,8 +587,12 @@ export class Station {
         car.fillProgress += deltaSeconds / FILL_SECONDS;
         if (car.fillProgress >= 1) {
           car.fillProgress = 1;
-          this.data.money += car.amount;
-          this.data.totalEarned += car.amount;
+          const payout = car.autoServed
+            ? Math.round(car.amount * (1 - ATTENDANT_COMMISSION))
+            : car.amount;
+          car.payout = payout;
+          this.data.money += payout;
+          this.data.totalEarned += payout;
           this.data.servedCars += 1;
           this.management.recordFuelSale(car.dispensedLiters);
           this.onServed?.(car);
@@ -508,12 +667,7 @@ export class Station {
     if (elapsed <= 0) return null;
 
     const capped = Math.min(elapsed, MAX_OFFLINE_HOURS * 3600);
-    const averageDemand =
-      FUELS.reduce(
-        (total, fuel) =>
-          total + fuelDemandFactor(fuel.id, this.fuelPriceOf(fuel.id)),
-        0,
-      ) / FUELS.length;
+    const averageDemand = this.averageFuelDemand();
     const averageBasePrice =
       FUELS.reduce((total, fuel) => total + fuel.pricePerLiter, 0) / FUELS.length;
     const averagePrice =

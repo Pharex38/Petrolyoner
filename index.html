@@ -20,6 +20,11 @@
         <header class="topbar">
           <div class="money" id="money">₺0</div>
           <div class="stats" id="stats">0 araç dolduruldu</div>
+          <div class="demand" id="demand">
+            <span class="demand-arrow" id="demand-arrow" aria-hidden="true">•</span>
+            <span class="demand-label" id="demand-label">Müşteri akışı normal</span>
+            <span class="demand-bar"><i id="demand-fill"></i></span>
+          </div>
         </header>
 
         <div id="management-alert" class="management-alert" hidden>
@@ -121,6 +126,18 @@
           <section class="pricing-section" aria-labelledby="fuel-pricing-title">
             <h3 id="fuel-pricing-title">Akaryakıt · litre</h3>
             <div id="fuel-price-list" class="price-list"></div>
+          </section>
+
+          <section class="pricing-section" aria-labelledby="traffic-side-title">
+            <h3 id="traffic-side-title">Trafik yönü</h3>
+            <div class="chips" id="traffic-side-chips">
+              <button type="button" class="chip" data-traffic-side="sag" aria-pressed="true">
+                Sağdan
+              </button>
+              <button type="button" class="chip" data-traffic-side="sol" aria-pressed="false">
+                Soldan
+              </button>
+            </div>
           </section>
 
           <section

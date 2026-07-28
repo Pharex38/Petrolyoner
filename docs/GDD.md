@@ -156,6 +156,21 @@ doğrudan kapasite demek. Kuyruk mekaniği bilerek v0.1'e alınmadı (bkz. Açı
 Oyun kapalıyken pompa başına saniyede ₺2, en fazla 4 saat. Aktif oynanan bir oyun
 olduğu için bilerek düşük tutuldu — amaç geri dönüşü ödüllendirmek, oynamamayı değil.
 
+## Pompacılar
+
+Yönetim → İşçiler sekmesinden tutulur. En küçük numaralı açık pompalardan başlayarak
+atanır; ilk pompacı ₺25.000, her yenisi ×1.9.
+
+Pompacı, beklemeye başlayan aracı **2,8 saniye sonra** kendisi doldurur. Bu gecikme
+bilerek var: oyuncu yetişirse tam parayı alır. Otomatik serviste tutarın **%20'si**
+pompacıya gider. Maaş yerine komisyon seçildi — kendiliğinden ölçeklenir ve elle
+servisi her zaman kârlı tutar.
+
+## Trafik yönü
+
+Sağdan (Türkiye) veya soldan trafik seçilebilir. Yol ve istasyon yerinde kalır;
+şeritler ters akar ve istasyonun giriş/çıkış kapıları rol değiştirir.
+
 ## Sonraki katmanlar (v0.2+)
 
 - **Kuyruk:** pompalar doluyken araçlar sıraya girer, sabır daha hızlı erir

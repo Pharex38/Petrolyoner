@@ -6,11 +6,18 @@ import {
   ENTRY_Z,
   EXIT_Z,
   LANE_X,
+  stationEntryZ,
+  stationExitZ,
   MARKET_X,
   MARKET_Z,
   SLOTS,
   findSlot,
 } from '../game/slots';
+import {
+  DEFAULT_TRAFFIC_SIDE,
+  stationFlowDirection,
+  type TrafficSide,
+} from '../game/traffic';
 import { AmbientSystem } from './ambient';
 import {
   PumpIsland,
@@ -47,6 +54,15 @@ const DAY_CYCLE_SECONDS = 180;
 
 /** Sağdaki ana yolu da gösterecek, dikey ekrana göre ayarlanmış referans genişlik. */
 const TARGET_WIDTH = 14.1;
+/** Yakınlaştırma sınırları; 1 = varsayılan çerçeve. */
+const MIN_ZOOM = 0.65;
+const MAX_ZOOM = 3.2;
+/** Kameranın bakış noktasının saha merkezinden uzaklaşabileceği sınır. */
+const PAN_LIMIT_X = 13;
+const PAN_LIMIT_Z = 17;
+/** Bu eşiği aşan sürükleme dokunma değil kaydırma sayılır. */
+const PAN_THRESHOLD_PX = 12;
+
 /** Yatay ekranda derinlik sığsın diye referans yükseklik. */
 const TARGET_HEIGHT = 17.5;
 
@@ -86,12 +102,51 @@ const EMERGENCY_YIELD_DISTANCE = 16;
 const EMERGENCY_STOP_DISTANCE = 6.5;
 const EMERGENCY_SHOULDER_INSET = 0.24;
 const RESCUE_ROUTE_LIMIT = 30;
-const RESCUE_ENTRY_STOP_Z = ENTRY_Z + 2.4;
+
+/**
+ * Aktif trafik yönü. Modül düzeyinde tutuluyor çünkü rota kurucuları da
+ * (stationRoute) sınıf dışında ve aynı yönü görmek zorunda.
+ */
+let activeTrafficSide: TrafficSide = DEFAULT_TRAFFIC_SIDE;
+
+/** İstasyona komşu şeridin ve saha içi akışın yönü: sağdan -1, soldan +1. */
+function flow(): -1 | 1 {
+  return stationFlowDirection(activeTrafficSide);
+}
+
+/** Araçların sahaya girdiği kapı. */
+function gateIn(): number {
+  return stationEntryZ(activeTrafficSide);
+}
+
+/** Araçların sahadan çıktığı kapı. */
+function gateOut(): number {
+  return stationExitZ(activeTrafficSide);
+}
+
+/** prev→next hareketi, akış yönünde ilerlerken hedef z'yi geçti mi? */
+function crossedAlongFlow(previousZ: number, nextZ: number, target: number): boolean {
+  return flow() < 0
+    ? previousZ >= target && nextZ <= target
+    : previousZ <= target && nextZ >= target;
+}
+
+/** Akış yönünde iki noktadan daha ileride olanı. */
+function furthestAlongFlow(a: number, b: number): number {
+  return flow() < 0 ? Math.min(a, b) : Math.max(a, b);
+}
+/** Çekicinin giriş ağzında beklediği nokta; kapıdan akışın gerisinde kalır. */
+function rescueEntryStopZ(): number {
+  return ENTRY_Z - flow() * 2.4;
+}
 const RESCUE_TRUCK_UNLOAD_PROGRESS = 0.8;
 const RESCUE_UNLOAD_SECONDS = 2.2;
 const RESCUE_RELEASE_EXIT_PROGRESS = 0.42;
 const FUEL_TANKER_ROUTE_LIMIT = 31;
-const FUEL_TANKER_ENTRY_STOP_Z = ENTRY_Z + 2.75;
+/** Tankerin giriş ağzında beklediği nokta. */
+function fuelTankerEntryStopZ(): number {
+  return ENTRY_Z - flow() * 2.75;
+}
 const FUEL_TANKER_BAY_X = 4.75;
 const FUEL_TANKER_BAY_Z = 15.2;
 const FUEL_TANKER_UNLOAD_SECONDS = 6.2;
@@ -308,6 +363,22 @@ export class World {
   private readonly projectionScratch = new THREE.Vector3();
   private readonly pickables: THREE.Object3D[] = [];
   private readonly carMeshes = new Map<number, THREE.Group>();
+
+  /** Kameranın baktığı nokta; kaydırma bunu XZ düzleminde oynatır. */
+  private readonly cameraTarget = new THREE.Vector3(-0.45, 0, -0.8);
+  /** Kameranın hedefe göre sabit konumu — izometrik açı hep korunur. */
+  private readonly cameraOffset = new THREE.Vector3(14.45, 21, 15.8);
+  private readonly homeTarget = new THREE.Vector3(-0.45, 0, -0.8);
+  private zoomLevel = 1;
+  private frustumWidth = TARGET_WIDTH;
+  private frustumHeight = TARGET_HEIGHT;
+  private readonly activePointers = new Map<number, { x: number; y: number }>();
+  private pinchDistance = 0;
+  private panPointerId: number | null = null;
+  private panStart = { x: 0, y: 0 };
+  private panning = false;
+  private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  private readonly groundHit = new THREE.Vector3();
   private readonly aliveCarIds = new Set<number>();
   private readonly trafficCars: TrafficCar[] = [];
   private readonly isMobileDevice = window.matchMedia('(pointer: coarse)').matches;
@@ -351,8 +422,7 @@ export class World {
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 120);
     // Referanstaki izometrik hissi, istasyonun sağ önünden alıyoruz. Ana yol
     // bu yüzden ekranın sağında akıyor; pompalar ve müşteri arabaları açıkta kalıyor.
-    this.camera.position.set(14, 21, 15);
-    this.camera.lookAt(-0.45, 0, -0.8);
+    this.applyCamera();
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     // Trafik varken mobil GPU'da gereksiz yüksek çözünürlüklü render yapma.
@@ -386,6 +456,7 @@ export class World {
     this.storageTankSite.visible = false;
     this.scene.add(this.storageTankSite);
 
+    this.attachViewControls();
     this.resize();
   }
 
@@ -430,6 +501,34 @@ export class World {
    * Market yeni oyunda yoktur. Satın alınınca temelden yukarı doğru kısa,
    * kesintisiz bir inşa hareketiyle sahneye gelir.
    */
+  /**
+   * Trafik yönünü değiştirir: her iki şerit de ters yöne akmaya başlar ve
+   * istasyonun giriş/çıkış kapıları rol değiştirir. Yol ve istasyon yerinde kalır.
+   *
+   * Sahadaki mevcut müşteriler eski rotalarını tamamlar; yeni gelenler yeni
+   * yöne göre hareket eder. Aksi halde yarı yolda ışınlanmış görünürlerdi.
+   */
+  setTrafficSide(side: TrafficSide): void {
+    if (activeTrafficSide === side) return;
+
+    activeTrafficSide = side;
+
+    // Rota önbelleği yön anahtarlı; yine de büyümesin diye temizliyoruz.
+    stationRoutes.arriving.clear();
+    stationRoutes.leaving.clear();
+
+    for (const trafficCar of this.trafficCars) {
+      // Şerit x'i sabit; sadece o şeridin taşıdığı yön tersine döner.
+      const direction = -trafficCar.direction as TrafficDirection;
+      trafficCar.direction = direction;
+      trafficCar.mesh.rotation.y = direction === -1 ? 0 : Math.PI;
+    }
+  }
+
+  get trafficSide(): TrafficSide {
+    return activeTrafficSide;
+  }
+
   setMarketBuilt(built: boolean, animate = false): void {
     if (!built) {
       if (this.marketConstructionSite !== null) {
@@ -690,7 +789,8 @@ export class World {
       this.scene.add(mesh);
       this.registerTrafficCar(
         mesh,
-        seed.direction,
+        // Soldan trafikte her iki şerit de ters yöne akar; şerit x'leri sabit kalır.
+        (activeTrafficSide === 'sag' ? seed.direction : -seed.direction) as TrafficDirection,
         seed.laneX,
         seed.z,
         seed.speed,
@@ -800,7 +900,7 @@ export class World {
     if (trafficIndex >= 0) this.trafficCars.splice(trafficIndex, 1);
 
     const mesh = trafficCar.mesh;
-    mesh.position.z = ENTRY_Z;
+    mesh.position.z = gateIn();
     mesh.userData.slotIndex = customer.slotIndex;
     mesh.userData.pickKind = 'car';
     setCarTurnSignal(mesh, 'right', true);
@@ -819,9 +919,10 @@ export class World {
     setCarTurnSignal(mesh, null, false);
     this.registerTrafficCar(
       mesh,
-      1,
+      // Çıkış kapısı karşı şeride açılır; o şerit akışın tersini taşır.
+      -flow() as TrafficDirection,
       OUTBOUND_TRAFFIC_X,
-      EXIT_Z,
+      gateOut(),
       randomBetween(3.35, 4.25),
       color,
       vehicleStyleOf(mesh),
@@ -1211,9 +1312,8 @@ export class World {
         !this.fuelDeliveryBlocksStationRoutes() &&
         this.rescueDelivery?.phase !== 'waiting' &&
         trafficCar.event === null &&
-        trafficCar.direction === -1 &&
-        previousZ >= ENTRY_Z &&
-        nextZ <= ENTRY_Z
+        trafficCar.direction === flow() &&
+        crossedAlongFlow(previousZ, nextZ, gateIn())
       ) {
         const customer = this.onTrafficCarAtEntrance?.(trafficCar.color) ?? null;
         if (customer !== null) {
@@ -1571,23 +1671,23 @@ export class World {
       if (entryBlocked) {
         distance = Math.min(
           distance,
-          Math.max(0, delivery.z - FUEL_TANKER_ENTRY_STOP_Z),
+          Math.max(0, flow() * (fuelTankerEntryStopZ() - delivery.z)),
         );
       }
-      delivery.z -= distance;
+      delivery.z += flow() * distance;
       delivery.truck.position.set(INBOUND_TRAFFIC_X, VEHICLE_Y, delivery.z);
       setCarTurnSignal(delivery.truck, 'right', signalPulse);
 
-      if (!entryBlocked && previousZ >= ENTRY_Z && delivery.z <= ENTRY_Z) {
+      if (!entryBlocked && crossedAlongFlow(previousZ, delivery.z, ENTRY_Z)) {
         delivery.phase = 'entering';
         delivery.progress = 0;
         delivery.elapsed = 0;
         delivery.entryRoute = entryRoute;
         return;
       }
-      if (entryBlocked && delivery.z <= FUEL_TANKER_ENTRY_STOP_Z + 0.01) {
+      if (entryBlocked && flow() * (delivery.z - fuelTankerEntryStopZ()) >= -0.01) {
         delivery.phase = 'waiting';
-        delivery.z = FUEL_TANKER_ENTRY_STOP_Z;
+        delivery.z = fuelTankerEntryStopZ();
         delivery.elapsed = 0;
         // Bekleme noktası giriş çizgisinden daha yukarıda olduğu için, bir
         // sonraki rota bu gerçek noktadan yeniden kurulacak.
@@ -1600,14 +1700,14 @@ export class World {
       delivery.truck.position.set(
         INBOUND_TRAFFIC_X,
         VEHICLE_Y,
-        FUEL_TANKER_ENTRY_STOP_Z,
+        fuelTankerEntryStopZ(),
       );
       setCarHazards(
         delivery.truck,
         Math.floor(delivery.elapsed * 2.2) % 2 === 0,
       );
       const entryRoute = delivery.entryRoute ?? this.createFuelDeliveryEntryRoute(
-        FUEL_TANKER_ENTRY_STOP_Z,
+        fuelTankerEntryStopZ(),
       );
       delivery.entryRoute = entryRoute;
       if (
@@ -1825,9 +1925,9 @@ export class World {
       // Ortak istasyon rotası doluyken çekici giriş ağzında görünür biçimde
       // sıraya girer; sahaya ışınlanmaz.
       if (this.stationRouteOwnerId !== null) {
-        distance = Math.min(distance, Math.max(0, delivery.z - RESCUE_ENTRY_STOP_Z));
+        distance = Math.min(distance, Math.max(0, delivery.z - rescueEntryStopZ()));
       }
-      delivery.z -= distance;
+      delivery.z += flow() * distance;
       delivery.truck.position.set(INBOUND_TRAFFIC_X, VEHICLE_Y, delivery.z);
       delivery.car.position.set(
         INBOUND_TRAFFIC_X,
@@ -1839,8 +1939,7 @@ export class World {
 
       if (
         this.stationRouteOwnerId === null &&
-        previousZ >= ENTRY_Z &&
-        delivery.z <= ENTRY_Z
+        crossedAlongFlow(previousZ, delivery.z, ENTRY_Z)
       ) {
         const customer = this.onFuelRescueAtEntrance?.(delivery.color) ?? null;
         if (customer !== null) {
@@ -1850,7 +1949,7 @@ export class World {
         // Boş pompa yoksa çekici kaybolmaz; giriş ağzında dörtlülerini yakıp
         // yer açılmasını bekler ve ardından aynı teslimatı tamamlar.
         delivery.phase = 'waiting';
-        delivery.z = ENTRY_Z + 0.25;
+        delivery.z = ENTRY_Z - flow() * 0.25;
         delivery.elapsed = 0;
         delivery.truck.position.set(INBOUND_TRAFFIC_X, VEHICLE_Y, delivery.z);
         delivery.car.position.set(
@@ -2047,17 +2146,17 @@ export class World {
     const route = new THREE.CatmullRomCurve3(
       [
         new THREE.Vector3(from.x, 0, from.z),
-        new THREE.Vector3(LANE_X, 0, from.z - 1.25),
+        new THREE.Vector3(LANE_X, 0, from.z + flow() * 1.25),
         new THREE.Vector3(
           LANE_X,
           0,
-          Math.min(from.z - 2.55, EXIT_Z + 2.1),
+          furthestAlongFlow(from.z + flow() * 2.55, gateOut() - flow() * 2.1),
         ),
-        new THREE.Vector3(LANE_X + 2.05, 0, EXIT_Z + 1.05),
-        new THREE.Vector3(ROAD_X - ROAD_WIDTH / 2 + 0.1, 0, EXIT_Z + 0.15),
-        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, EXIT_Z),
-        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, EXIT_Z + 9),
-        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, RESCUE_ROUTE_LIMIT),
+        new THREE.Vector3(LANE_X + 2.05, 0, gateOut() - flow() * 1.05),
+        new THREE.Vector3(ROAD_X - ROAD_WIDTH / 2 + 0.1, 0, gateOut() - flow() * 0.15),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, gateOut()),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, gateOut() - flow() * 9),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, -flow() * RESCUE_ROUTE_LIMIT),
       ],
       false,
       'centripetal',
@@ -2329,7 +2428,7 @@ export class World {
       this.trafficCars.filter(
         (candidate) =>
           candidate.event === null &&
-          Math.abs(candidate.mesh.position.z - ENTRY_Z) > 9,
+          Math.abs(candidate.mesh.position.z - gateIn()) > 9,
       ),
     );
     if (trafficCar === null) return false;
@@ -2354,7 +2453,7 @@ export class World {
         (candidate) =>
           candidate.event === null &&
           candidate.style === 'sport' &&
-          Math.abs(candidate.mesh.position.z - ENTRY_Z) > 10,
+          Math.abs(candidate.mesh.position.z - gateIn()) > 10,
       ),
     );
     if (trafficCar === null) return false;
@@ -2376,7 +2475,8 @@ export class World {
     const trafficCar = randomItem(candidates);
     if (trafficCar === null) return false;
 
-    const targetX = trafficCar.direction === -1 ? OUTBOUND_TRAFFIC_X : INBOUND_TRAFFIC_X;
+    const targetX =
+      trafficCar.laneX === INBOUND_TRAFFIC_X ? OUTBOUND_TRAFFIC_X : INBOUND_TRAFFIC_X;
     trafficCar.event = {
       kind: 'overtake',
       elapsed: 0,
@@ -2392,9 +2492,9 @@ export class World {
     const candidates = this.trafficCars.filter(
       (trafficCar) =>
         trafficCar.event === null &&
-        trafficCar.direction === 1 &&
+        trafficCar.direction === -flow() &&
         trafficCar.style !== 'sport' &&
-        Math.abs(trafficCar.mesh.position.z - ENTRY_Z) > 8,
+        Math.abs(trafficCar.mesh.position.z - gateIn()) > 8,
     );
     const trafficCar = randomItem(candidates);
     if (trafficCar === null) return false;
@@ -3008,7 +3108,8 @@ export class World {
     direction: TrafficDirection,
     preferredZ: number,
   ): void {
-    const laneX = direction === -1 ? INBOUND_TRAFFIC_X : OUTBOUND_TRAFFIC_X;
+    // İstasyona komşu şerit akış yönünü taşır; diğeri karşı yönü.
+    const laneX = direction === flow() ? INBOUND_TRAFFIC_X : OUTBOUND_TRAFFIC_X;
     trafficCar.direction = direction;
     trafficCar.laneX = laneX;
     trafficCar.mesh.position.x = laneX;
@@ -3051,13 +3152,199 @@ export class World {
       frustumWidth = frustumHeight * aspect;
     }
 
-    this.camera.left = -frustumWidth / 2;
-    this.camera.right = frustumWidth / 2;
-    this.camera.top = frustumHeight / 2;
-    this.camera.bottom = -frustumHeight / 2;
-    this.camera.updateProjectionMatrix();
+    this.frustumWidth = frustumWidth;
+    this.frustumHeight = frustumHeight;
+    this.updateProjection();
 
     this.renderer.setSize(width, height, false);
+  }
+
+  // ---------- Görünüm denetimi (kaydırma / yakınlaştırma) ----------
+
+  private updateProjection(): void {
+    const halfWidth = this.frustumWidth / (2 * this.zoomLevel);
+    const halfHeight = this.frustumHeight / (2 * this.zoomLevel);
+
+    this.camera.left = -halfWidth;
+    this.camera.right = halfWidth;
+    this.camera.top = halfHeight;
+    this.camera.bottom = -halfHeight;
+    this.camera.updateProjectionMatrix();
+  }
+
+  private applyCamera(): void {
+    this.camera.position.copy(this.cameraTarget).add(this.cameraOffset);
+    this.camera.lookAt(this.cameraTarget);
+  }
+
+  /** Ekran noktasının zemindeki (y=0) karşılığı; imlece göre yakınlaştırmak için. */
+  private groundPointAt(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+    this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+
+    return this.raycaster.ray.intersectPlane(this.groundPlane, this.groundHit);
+  }
+
+  /** İmlecin altındaki zemin noktası sabit kalacak şekilde yakınlaştırır. */
+  zoomAt(factor: number, clientX: number, clientY: number): void {
+    const next = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, this.zoomLevel * factor));
+    if (next === this.zoomLevel) return;
+
+    const before = this.groundPointAt(clientX, clientY)?.clone() ?? null;
+    this.zoomLevel = next;
+    this.updateProjection();
+
+    if (before !== null) {
+      const after = this.groundPointAt(clientX, clientY);
+      if (after !== null) {
+        this.cameraTarget.x += before.x - after.x;
+        this.cameraTarget.z += before.z - after.z;
+        this.clampTarget();
+        this.applyCamera();
+      }
+    }
+  }
+
+  /** Ekran pikseli cinsinden sürüklemeyi dünya düzleminde kaydırmaya çevirir. */
+  panByScreen(deltaX: number, deltaY: number): void {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+
+    const worldPerPixelX = this.frustumWidth / this.zoomLevel / rect.width;
+    const worldPerPixelY = this.frustumHeight / this.zoomLevel / rect.height;
+
+    // Kameranın sağ ekseni ve zemine izdüşen ileri ekseni.
+    const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    right.y = 0;
+    right.normalize();
+
+    const forward = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1);
+    forward.y = 0;
+    forward.normalize();
+
+    // İçerik parmağı takip etsin: parmak sağa giderse görüş alanı sola kayar.
+    // Dikeyde forward zaten kameradan uzağa (ekranda yukarı) baktığı için
+    // işaret yatayın tersidir; ikisini aynı yazmak aşağı/yukarıyı ters çeviriyordu.
+    this.cameraTarget.addScaledVector(right, -deltaX * worldPerPixelX);
+    this.cameraTarget.addScaledVector(forward, deltaY * worldPerPixelY);
+
+    this.clampTarget();
+    this.applyCamera();
+  }
+
+  private clampTarget(): void {
+    this.cameraTarget.x = Math.max(
+      this.homeTarget.x - PAN_LIMIT_X,
+      Math.min(this.homeTarget.x + PAN_LIMIT_X, this.cameraTarget.x),
+    );
+    this.cameraTarget.z = Math.max(
+      this.homeTarget.z - PAN_LIMIT_Z,
+      Math.min(this.homeTarget.z + PAN_LIMIT_Z, this.cameraTarget.z),
+    );
+  }
+
+  /** Görünümü başlangıç çerçevesine döndürür. */
+  resetView(): void {
+    this.cameraTarget.copy(this.homeTarget);
+    this.zoomLevel = 1;
+    this.updateProjection();
+    this.applyCamera();
+  }
+
+  /** İki parmak veya sürükleme sürüyor mu — dokunma/basılı tutma bunu beklemeli. */
+  get isGesturing(): boolean {
+    return this.panning || this.activePointers.size > 1;
+  }
+
+  private attachViewControls(): void {
+    const canvas = this.renderer.domElement;
+
+    canvas.addEventListener(
+      'wheel',
+      (event) => {
+        event.preventDefault();
+        this.zoomAt(Math.pow(0.999, event.deltaY), event.clientX, event.clientY);
+      },
+      { passive: false },
+    );
+
+    canvas.addEventListener('pointerdown', (event) => {
+      this.activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+      if (this.activePointers.size === 1) {
+        this.panPointerId = event.pointerId;
+        this.panStart = { x: event.clientX, y: event.clientY };
+        this.panning = false;
+        return;
+      }
+
+      // İkinci parmak indi: tek parmak kaydırmasını bırak, kıstırmaya geç.
+      this.panPointerId = null;
+      this.panning = false;
+      this.pinchDistance = this.currentPinchDistance();
+    });
+
+    canvas.addEventListener('pointermove', (event) => {
+      const tracked = this.activePointers.get(event.pointerId);
+      if (tracked === undefined) return;
+
+      const previous = { ...tracked };
+      tracked.x = event.clientX;
+      tracked.y = event.clientY;
+
+      if (this.activePointers.size >= 2) {
+        const distance = this.currentPinchDistance();
+        if (this.pinchDistance > 0 && distance > 0) {
+          const center = this.pinchCenter();
+          this.zoomAt(distance / this.pinchDistance, center.x, center.y);
+        }
+        this.pinchDistance = distance;
+        return;
+      }
+
+      if (this.panPointerId !== event.pointerId) return;
+
+      if (!this.panning) {
+        const travelled = Math.hypot(
+          event.clientX - this.panStart.x,
+          event.clientY - this.panStart.y,
+        );
+        if (travelled <= PAN_THRESHOLD_PX) return;
+        this.panning = true;
+      }
+
+      this.panByScreen(event.clientX - previous.x, event.clientY - previous.y);
+    });
+
+    const release = (event: PointerEvent): void => {
+      this.activePointers.delete(event.pointerId);
+
+      if (this.activePointers.size < 2) this.pinchDistance = 0;
+      if (this.panPointerId === event.pointerId) {
+        this.panPointerId = null;
+        this.panning = false;
+      }
+    };
+
+    canvas.addEventListener('pointerup', release);
+    canvas.addEventListener('pointercancel', release);
+    canvas.addEventListener('pointerleave', release);
+  }
+
+  private currentPinchDistance(): number {
+    const [first, second] = [...this.activePointers.values()];
+    if (first === undefined || second === undefined) return 0;
+
+    return Math.hypot(first.x - second.x, first.y - second.y);
+  }
+
+  private pinchCenter(): { x: number; y: number } {
+    const [first, second] = [...this.activePointers.values()];
+    if (first === undefined || second === undefined) return { x: 0, y: 0 };
+
+    return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
   }
 
   render(): void {
@@ -3118,8 +3405,8 @@ interface CarTransform {
 type StationRouteKind = 'arriving' | 'leaving';
 
 const stationRoutes = {
-  arriving: new Map<number, THREE.CatmullRomCurve3>(),
-  leaving: new Map<number, THREE.CatmullRomCurve3>(),
+  arriving: new Map<string, THREE.CatmullRomCurve3>(),
+  leaving: new Map<string, THREE.CatmullRomCurve3>(),
 };
 const parkedRotations = new Map<number, number>();
 
@@ -3127,37 +3414,47 @@ const parkedRotations = new Map<number, number>();
  * İstasyona giriş ve çıkışları tek karede sağa/sola kırmak yerine kavisli yol
  * üzerinden örnekler. GetPointAt eşit aralıklı hız verdiği için mobilde de akıcıdır.
  */
+/**
+ * Rota noktaları elle ayarlandığı için trafik yönü değişince yeniden çizilmez;
+ * kapıya göre olan z ofsetleri akış yönüyle çarpılarak aynalanır. x değerleri
+ * aynı kalır — yol ve istasyon yerinde durur.
+ */
 function stationRoute(slot: SlotDefinition, kind: StationRouteKind): THREE.CatmullRomCurve3 {
-  const cached = stationRoutes[kind].get(slot.index);
+  const key = `${activeTrafficSide}:${slot.index}`;
+  const cached = stationRoutes[kind].get(key);
   if (cached !== undefined) return cached;
+
+  const f = flow();
+  const entry = gateIn();
+  const exit = gateOut();
 
   const points = kind === 'arriving'
     ? [
-        new THREE.Vector3(INBOUND_TRAFFIC_X, 0, ENTRY_Z),
-        new THREE.Vector3(INBOUND_TRAFFIC_X - 0.95, 0, ENTRY_Z - 0.32),
-        new THREE.Vector3(LANE_X + 2.15, 0, ENTRY_Z - 1.18),
-        new THREE.Vector3(LANE_X + 0.35, 0, ENTRY_Z - 2.35),
-        new THREE.Vector3(LANE_X, 0, slot.z + 1.15),
-        new THREE.Vector3(slot.carX, 0, slot.z + 0.85),
+        new THREE.Vector3(INBOUND_TRAFFIC_X, 0, entry),
+        new THREE.Vector3(INBOUND_TRAFFIC_X - 0.95, 0, entry + f * 0.32),
+        new THREE.Vector3(LANE_X + 2.15, 0, entry + f * 1.18),
+        new THREE.Vector3(LANE_X + 0.35, 0, entry + f * 2.35),
+        new THREE.Vector3(LANE_X, 0, slot.z - f * 1.15),
+        new THREE.Vector3(slot.carX, 0, slot.z - f * 0.85),
         new THREE.Vector3(slot.carX, 0, slot.z),
       ]
     : [
         new THREE.Vector3(slot.carX, 0, slot.z),
-        new THREE.Vector3(slot.carX, 0, slot.z - 0.85),
-        new THREE.Vector3(LANE_X, 0, slot.z - 1.15),
+        new THREE.Vector3(slot.carX, 0, slot.z + f * 0.85),
+        new THREE.Vector3(LANE_X, 0, slot.z + f * 1.15),
         new THREE.Vector3(
           LANE_X,
           0,
-          Math.min(slot.z - 2.55, EXIT_Z + 2.1),
+          furthestAlongFlow(slot.z + f * 2.55, exit - f * 2.1),
         ),
-        new THREE.Vector3(LANE_X + 1.95, 0, EXIT_Z + 1.1),
-        new THREE.Vector3(ROAD_X - ROAD_WIDTH / 2 + 0.12, 0, EXIT_Z + 0.24),
-        new THREE.Vector3(OUTBOUND_TRAFFIC_X - 0.42, 0, EXIT_Z),
-        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, EXIT_Z),
+        new THREE.Vector3(LANE_X + 1.95, 0, exit - f * 1.1),
+        new THREE.Vector3(ROAD_X - ROAD_WIDTH / 2 + 0.12, 0, exit - f * 0.24),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X - 0.42, 0, exit),
+        new THREE.Vector3(OUTBOUND_TRAFFIC_X, 0, exit),
       ];
   const route = new THREE.CatmullRomCurve3(points, false, 'centripetal');
   route.arcLengthDivisions = 96;
-  stationRoutes[kind].set(slot.index, route);
+  stationRoutes[kind].set(key, route);
   return route;
 }
 

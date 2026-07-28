@@ -223,6 +223,24 @@ export class ManagementPanel {
         state.workers.map((worker) => this.renderWorker(worker)).join('') +
       `</section>` +
       `<section class="management-section">` +
+        `<h3>Pompacılar</h3>` +
+        this.actionCard(
+          `${this.station.attendantCount}/${this.station.unlockedCount} pompa otomatik`,
+          this.station.attendantCount === 0
+            ? `Pompacı, beklemeye başlayan aracı kendisi doldurur ama tutarın ` +
+              `%${Math.round(this.station.attendantCommission * 100)}'ini alır. ` +
+              `Sen yetişirsen tam parayı alırsın.`
+            : `1–${this.station.attendantCount}. pompa otomatik. Otomatik servislerde ` +
+              `tutarın %${Math.round(this.station.attendantCommission * 100)}'i pompacıya gidiyor.`,
+          'hire-attendant',
+          this.station.canHireAttendant
+            ? `Pompacı tut · ${formatMoney(this.station.attendantCost())}`
+            : 'Her pompanın pompacısı var',
+          !this.station.canHireAttendant || !this.station.canAfford(this.station.attendantCost()),
+          'wage',
+        ) +
+      `</section>` +
+      `<section class="management-section">` +
         `<h3>Çalışma koşulları</h3>` +
         this.actionCard(
           `Maaş seviyesi ${state.wageLevel}/5`,
@@ -474,6 +492,12 @@ export class ManagementPanel {
     const management = this.station.management;
     let result: ManagementActionResult | null = null;
     if (action === 'hire') result = management.hireWorker(target);
+    if (action === 'hire-attendant') {
+      // Pompacı istasyon katmanında; şirket personelinden ayrı tutuluyor.
+      result = this.station.tryHireAttendant()
+        ? { ok: true, message: `${this.station.attendantCount}. pompacı işe alındı.` }
+        : { ok: false, message: 'Pompacı tutulamadı — para ya da boş pompa yok.' };
+    }
     if (action === 'upgrade-safety') result = management.upgradePolicy('safety');
     if (action === 'upgrade-wage') result = management.upgradePolicy('wage');
     if (action === 'upgrade-conditions') result = management.upgradePolicy('conditions');

@@ -17,6 +17,7 @@ const station = new Station();
 const world = new World(viewport);
 const hud = new Hud(station);
 const sound = new SoundManager();
+world.setTrafficSide(station.trafficSide);
 world.setMarketBuilt(station.marketBuilt);
 world.setStorageLevel(station.management.state.storageLevel);
 
@@ -47,7 +48,14 @@ station.onServed = (car) => {
   const screen = world.carScreenPosition(car);
   if (screen === null) return;
 
-  hud.spawnFloater(`+${formatMoney(car.amount)}`, screen.x, screen.y);
+  // Pompacı komisyon kestiyse kasaya giren net tutar gösterilir.
+  hud.spawnFloater(
+    car.autoServed
+      ? `+${formatMoney(car.payout)} · pompacı`
+      : `+${formatMoney(car.payout)}`,
+    screen.x,
+    screen.y,
+  );
   if (car.wastedLiters > 0.01) {
     const wastedCost = Math.round(car.wastedLiters * findFuel(car.fuel).wholesalePerLiter);
     hud.spawnFloater(
@@ -114,6 +122,9 @@ world.renderer.domElement.addEventListener('pointerdown', (event) => {
   const previousHold = clearPendingCarHold();
   if (previousHold?.directStarted) hud.cancelDirectFill();
 
+  // İkinci parmak indiyse kullanıcı yakınlaştırıyor demektir; dolum başlatma.
+  if (world.isGesturing) return;
+
   const target = world.pickTarget(event.clientX, event.clientY);
   if (target === null) {
     hud.closeSheets();
@@ -165,9 +176,18 @@ world.renderer.domElement.addEventListener('pointerdown', (event) => {
 
 world.renderer.domElement.addEventListener('pointermove', (event) => {
   const pending = pendingCarHold;
-  if (pending === null || pending.pointerId !== event.pointerId || pending.directStarted) return;
+  if (pending === null || pending.pointerId !== event.pointerId) return;
+
   const distance = Math.hypot(event.clientX - pending.startX, event.clientY - pending.startY);
   if (distance <= CAR_HOLD_MOVE_TOLERANCE) return;
+
+  // Parmak kaydı: bu bir dokunma değil, harita kaydırma. Başlamış dolumu da kes.
+  if (pending.directStarted) {
+    clearPendingCarHold();
+    hud.cancelDirectFill();
+    return;
+  }
+
   pending.moved = true;
   clearTimeout(pending.timer);
 });
@@ -211,6 +231,15 @@ hud.onUnlock = (slotIndex) => {
   station.tryUnlockSlot(slotIndex);
 };
 
+world.renderer.domElement.addEventListener('dblclick', () => {
+  world.resetView();
+});
+
+hud.onTrafficSide = (side) => {
+  if (!station.setTrafficSide(side)) return;
+  world.setTrafficSide(side);
+};
+
 hud.onRestock = (fuel) => {
   if (world.isFuelDeliveryActive) return 'busy';
   const result = station.tryRestock(fuel);
@@ -236,8 +265,12 @@ let lastFrameTime = performance.now();
 
 /** Tek bir kare: oyun mantığını ilerlet, sahneyi ve arayüzü tazele. */
 function step(delta: number): void {
-  world.updateTraffic(delta);
-  station.tick(delta, hud.activeServiceSlotIndex);
+  // Panel açıkken dünya donar ama sahne çizilmeye ve arayüz güncellenmeye
+  // devam eder; böylece panel içindeki değerler canlı kalır.
+  if (!hud.isGamePaused) {
+    world.updateTraffic(delta);
+    station.tick(delta, hud.activeServiceSlotIndex);
+  }
   world.setProtestActive(station.management.isProtestActive);
   world.setStorageLevel(station.management.state.storageLevel);
 
@@ -323,6 +356,10 @@ if (import.meta.env.DEV) {
         world.setTimeOfDay(hour);
         hud.update(world);
         return { saat: world.clockLabel, gece: world.isNightTime };
+      },
+      view() {
+        world.resetView();
+        return 'görünüm sıfırlandı';
       },
       reset() {
         // Önce kaydı kapat: yoksa reload'un tetiklediği pagehide, sildiğimiz

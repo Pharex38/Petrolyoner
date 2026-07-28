@@ -1,3 +1,5 @@
+import type { TrafficSide } from './traffic';
+
 /**
  * Pompa yerleşimi. Dikey ekran için tasarlandı: arabalar alttan girip ortadaki
  * şeritten yukarı ilerler, sonra yana kayıp pompanın yanına yanaşır.
@@ -49,4 +51,17 @@ export const LANE_X = 0;
 
 export function findSlot(index: number): SlotDefinition | undefined {
   return SLOTS[index];
+}
+
+/**
+ * Araçların sahaya girdiği kapı. Sağdan trafikte alttaki (ENTRY_Z), soldan
+ * trafikte üstteki (EXIT_Z) kapı giriş olur.
+ */
+export function stationEntryZ(side: TrafficSide): number {
+  return side === 'sag' ? ENTRY_Z : EXIT_Z;
+}
+
+/** Araçların sahadan çıktığı kapı — girişin karşıtı. */
+export function stationExitZ(side: TrafficSide): number {
+  return side === 'sag' ? EXIT_Z : ENTRY_Z;
 }

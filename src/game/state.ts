@@ -10,8 +10,9 @@ import {
   type ManagementState,
 } from './management';
 import { createInitialMarketPrices, type MarketPrices } from './market';
+import { DEFAULT_TRAFFIC_SIDE, type TrafficSide } from './traffic';
 
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 8;
 
 export interface PlayerData {
   saveVersion: number;
@@ -36,6 +37,10 @@ export interface PlayerData {
   marketSales: number;
   /** Şirket yönetimi, personel, rakipler, hukuk ve ham petrol ekonomisi. */
   management: ManagementState;
+  /** İşe alınmış pompacı sayısı; en küçük numaralı pompalardan başlayarak atanır. */
+  attendants: number;
+  /** Trafiğin sağdan mı soldan mı aktığı; istasyon kapılarının rolünü de belirler. */
+  trafficSide: TrafficSide;
   /** Oyunun son kapandığı an (saniye). Gece vardiyası kazancı bundan hesaplanır. */
   lastSeenUnixSeconds: number;
 }
@@ -60,6 +65,8 @@ export function createNewGame(): PlayerData {
     marketPrices: createInitialMarketPrices(),
     marketSales: 0,
     management: createInitialManagementState(),
+    attendants: 0,
+    trafficSide: DEFAULT_TRAFFIC_SIDE,
     lastSeenUnixSeconds: nowUnixSeconds(),
   };
 }

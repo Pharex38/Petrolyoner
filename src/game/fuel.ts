@@ -113,13 +113,31 @@ export function fuelDemandFactor(fuel: FuelType, price: number): number {
   return Math.max(0.28, Math.min(1.28, 1 - relativeChange * 2.05));
 }
 
+export type DemandLevel = 'cok-dusuk' | 'dusuk' | 'normal' | 'yuksek' | 'cok-yuksek';
+
+/** Talep katsayısını beş kademeye indirger. Eşikler tek yerde dursun. */
+export function demandLevel(demand: number): DemandLevel {
+  if (demand >= 1.16) return 'cok-yuksek';
+  if (demand >= 1.02) return 'yuksek';
+  if (demand >= 0.82) return 'normal';
+  if (demand >= 0.55) return 'dusuk';
+  return 'cok-dusuk';
+}
+
+const DEMAND_LABELS: Record<DemandLevel, string> = {
+  'cok-yuksek': 'Talep çok yüksek',
+  yuksek: 'Talep yüksek',
+  normal: 'Talep normal',
+  dusuk: 'Talep düşük',
+  'cok-dusuk': 'Talep çok düşük',
+};
+
+export function demandLabel(demand: number): string {
+  return DEMAND_LABELS[demandLevel(demand)];
+}
+
 export function fuelDemandLabel(fuel: FuelType, price: number): string {
-  const demand = fuelDemandFactor(fuel, price);
-  if (demand >= 1.16) return 'Talep çok yüksek';
-  if (demand >= 1.02) return 'Talep yüksek';
-  if (demand >= 0.82) return 'Talep normal';
-  if (demand >= 0.55) return 'Talep düşük';
-  return 'Talep çok düşük';
+  return demandLabel(fuelDemandFactor(fuel, price));
 }
 
 export function litersForAmount(

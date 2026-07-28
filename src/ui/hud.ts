@@ -1,4 +1,4 @@
-import type { FuelInfo, FuelType } from '../game/fuel';
+import type { DemandLevel, FuelInfo, FuelType } from '../game/fuel';
 import { AMOUNT_OPTIONS, FUELS, findFuel } from '../game/fuel';
 import { formatDuration, formatMoney } from '../game/format';
 import type { ManagementEvent } from '../game/management';
@@ -7,11 +7,13 @@ import {
   MARKET_BUILD_COST,
   type BuildMarketResult,
   type Car,
+  type DemandTrend,
   type OfflineReport,
   type RestockResult,
   type Station,
 } from '../game/station';
 import { findSlot } from '../game/slots';
+import { isTrafficSide, type TrafficSide } from '../game/traffic';
 import type { World } from '../scene/world';
 import { ManagementPanel } from './management-panel';
 
@@ -30,6 +32,50 @@ const FILL_GAUGE_MAX = Math.max(...AMOUNT_OPTIONS) + 45;
 /** Parmak bırakma anındaki küçük motor/touch farklarını affeden hedef aralığı. */
 const TARGET_TOLERANCE = 22;
 
+/** Tam isabette panel çabuk kapansın, döngü hızlı kalsın. */
+const FILL_SUCCESS_FEEDBACK_MS = 620;
+/** Fazla dolumda uzun bir cümle var; okunacak kadar kalmalı. */
+const FILL_OVERFILL_FEEDBACK_MS = 2200;
+/** Hata mesajları da tek bakışta okunabilsin. */
+const FILL_ERROR_FEEDBACK_MS = 1150;
+
+/**
+ * Üst barın altındaki mutlak konumlu panellerin ofsetleri bu yüksekliğe göre
+ * yazılmıştı. Bar bundan uzunsa farkı --hud-stack-shift ile telafi ediyoruz.
+ */
+const TOPBAR_BASELINE_HEIGHT = 70;
+/** Haber kutusu üst bara yapışmasın. */
+const TOPBAR_CLEARANCE = 10;
+
+/** Talep çubuğunun sonunu temsil eden katsayı; 1.0 "normal" çentiğine denk gelir. */
+const DEMAND_GAUGE_MAX = 1.6;
+
+const DEMAND_ARROWS: Record<DemandTrend, string> = {
+  up: '▲',
+  down: '▼',
+  flat: '•',
+};
+
+const DEMAND_TREND_TEXT: Record<DemandTrend, string> = {
+  up: 'artıyor',
+  down: 'azalıyor',
+  flat: 'sabit',
+};
+
+/**
+ * Üst bar bilerek "Müşteri akışı" diyor: Fiyatlar panelindeki "Talep ..."
+ * etiketi yalnızca o yakıtın fiyat cazibesini ölçer, buradaki değer ise
+ * protesto/rakip/küresel olay etkileri dahil gerçek müşteri akışıdır.
+ * İkisi aynı kelimeyi kullanırsa çelişkili görünürler.
+ */
+const DEMAND_LEVEL_TEXT: Record<DemandLevel, string> = {
+  'cok-yuksek': 'çok yüksek',
+  yuksek: 'yüksek',
+  normal: 'normal',
+  dusuk: 'düşük',
+  'cok-dusuk': 'çok düşük',
+};
+
 interface CarLabelEntry {
   readonly element: HTMLElement;
   readonly bar: HTMLElement;
@@ -46,6 +92,7 @@ export class Hud {
   onUnlock: ((slotIndex: number) => void) | null = null;
   onRestock: ((fuel: FuelType) => RestockResult) | null = null;
   onBuildMarket: (() => BuildMarketResult) | null = null;
+  onTrafficSide: ((side: TrafficSide) => void) | null = null;
 
   private readonly station: Station;
   private readonly managementPanel: ManagementPanel;
@@ -53,6 +100,15 @@ export class Hud {
 
   private readonly moneyLabel = requireElement('money');
   private readonly statsLabel = requireElement('stats');
+  private readonly trafficSideChips = requireElement('traffic-side-chips');
+  private readonly demandRow = requireElement('demand');
+  private readonly demandArrow = requireElement('demand-arrow');
+  private readonly demandLabel = requireElement('demand-label');
+  private readonly demandFill = requireElement('demand-fill');
+
+  private lastDemandLevel: DemandLevel | null = null;
+  private lastDemandTrend: DemandTrend | null = null;
+  private lastDemandWidth = -1;
   private readonly floaterLayer = requireElement('floaters');
   private readonly carLabelLayer = requireElement('car-labels');
   private readonly stockBars = requireElement('stock-bars');
@@ -115,6 +171,7 @@ export class Hud {
     this.station = station;
     this.managementPanel = new ManagementPanel(station);
 
+    this.trackTopbarHeight();
     this.buildStockBars();
     this.buildFuelNozzles();
     this.buildPriceControls();
@@ -143,6 +200,16 @@ export class Hud {
     requireElement('management-open').addEventListener('click', () => {
       this.openManagementSheet();
     });
+
+    for (const chip of this.trafficSideChips.children) {
+      const side = (chip as HTMLElement).dataset.trafficSide;
+      if (!isTrafficSide(side)) continue;
+
+      chip.addEventListener('click', () => {
+        this.onTrafficSide?.(side);
+        this.refreshTrafficSideChips();
+      });
+    }
 
     requireElement('offline-continue').addEventListener('click', () => {
       this.offlinePanel.hidden = true;
@@ -203,7 +270,36 @@ export class Hud {
     this.unlockSheet.hidden = false;
   }
 
+  /**
+   * Üst bar yazı tipi ekran genişliğiyle büyüdüğü için yüksekliği sabit değil.
+   * Altındaki panellerin kayma miktarını sabit sayı yerine ölçümden veriyoruz;
+   * aksi halde geniş ekranda haber kutusu talep göstergesinin üstüne biniyor.
+   */
+  private trackTopbarHeight(): void {
+    const topbar = document.querySelector('.topbar');
+    if (!(topbar instanceof HTMLElement)) return;
+
+    const apply = (): void => {
+      const shift = Math.max(
+        0,
+        Math.round(topbar.offsetHeight - TOPBAR_BASELINE_HEIGHT + TOPBAR_CLEARANCE),
+      );
+      document.documentElement.style.setProperty('--hud-stack-shift', `${shift}px`);
+    };
+
+    apply();
+    new ResizeObserver(apply).observe(topbar);
+  }
+
+  private refreshTrafficSideChips(): void {
+    for (const chip of this.trafficSideChips.children) {
+      const side = (chip as HTMLElement).dataset.trafficSide;
+      chip.setAttribute('aria-pressed', String(side === this.station.trafficSide));
+    }
+  }
+
   openPricingSheet(): void {
+    this.refreshTrafficSideChips();
     this.closeSheets();
     for (const refresh of this.refreshPriceControls) refresh();
     this.marketPricingSection.hidden = !this.station.marketBuilt;
@@ -233,6 +329,14 @@ export class Hud {
     return this.openSlot;
   }
 
+  /**
+   * Yönetim ve fiyat panelleri okuma/karar panelidir; açıkken oyun durur.
+   * Servis paneli buna dahil değil — o zaten oyunun kendisi.
+   */
+  get isGamePaused(): boolean {
+    return !this.pricingSheet.hidden || this.managementPanel.isOpen;
+  }
+
   get isServeSheetOpen(): boolean {
     return !this.serveSheet.hidden;
   }
@@ -240,9 +344,14 @@ export class Hud {
   /** Aktif dolum ve kısa başarı geri bildirimi boyunca müşterinin sabrını dondurur. */
   get activeServiceSlotIndex(): number | null {
     if (this.openSlot === null) return null;
-    return this.fillActive || this.fillConsole.classList.contains('success')
-      ? this.openSlot
-      : null;
+    // Geri bildirim ekranda dururken sabır işlemesin; yoksa uzattığımız
+    // "fazla doldurdun" mesajı sırasında müşteri kaçabiliyor.
+    const showingFeedback =
+      this.fillConsole.classList.contains('success') ||
+      this.fillConsole.classList.contains('overfilled') ||
+      this.fillConsole.classList.contains('error');
+
+    return this.fillActive || showingFeedback ? this.openSlot : null;
   }
 
   /** Arabaya uzun basıldığında paneli doğru nozulla doğrudan doldurmaya başlatır. */
@@ -276,6 +385,8 @@ export class Hud {
       `${data.servedCars} araç dolduruldu · ${data.missedCars} kaçtı · ` +
         `${this.station.unlockedCount}/6 pompa`,
     );
+
+    this.updateDemandIndicator();
 
     this.setText(this.clockLabel, world.clockLabel);
     this.setText(this.dayIcon, world.weatherIcon);
@@ -318,6 +429,47 @@ export class Hud {
           ? `${fuel.label} tankı dolu`
           : `${Math.round(quote.liters)} L ikmal: ${formatMoney(quote.cost)}`;
     }
+  }
+
+  /**
+   * Müşteri talebini üst barda gösterir: kademe rengi, yön oku ve doluluk çubuğu.
+   * Talep zaten acceptCustomer'ın attığı zarı belirliyordu; burada sadece
+   * oyuncuya görünür hale geliyor.
+   */
+  private updateDemandIndicator(): void {
+    const demand = this.station.customerDemand();
+    const level = this.station.customerDemandLevel;
+    const trend = this.station.demandTrend;
+
+    if (level !== this.lastDemandLevel || trend !== this.lastDemandTrend) {
+      const levelChanged = this.lastDemandLevel !== null && level !== this.lastDemandLevel;
+
+      this.demandRow.className = `demand level-${level} trend-${trend}`;
+      this.lastDemandLevel = level;
+      this.lastDemandTrend = trend;
+
+      this.setText(this.demandArrow, DEMAND_ARROWS[trend]);
+      this.setText(this.demandLabel, `Müşteri akışı ${DEMAND_LEVEL_TEXT[level]}`);
+      this.demandRow.title =
+        `Müşteri akışı ${DEMAND_TREND_TEXT[trend]} — normalin %${Math.round(demand * 100)} kadarı. ` +
+        'Litre fiyatları, protesto, rakip fiyat savaşı ve küresel olaylar bu değeri değiştirir.';
+
+      if (levelChanged && !this.reduceMotion) this.flashDemandChange();
+    }
+
+    // Yüzdeyi ondalığa yuvarlayıp aynı değerde style yazmaktan kaçınıyoruz.
+    const width = Math.round(Math.min(1, demand / DEMAND_GAUGE_MAX) * 1000) / 10;
+    if (width !== this.lastDemandWidth) {
+      this.lastDemandWidth = width;
+      this.demandFill.style.width = `${width}%`;
+    }
+  }
+
+  private flashDemandChange(): void {
+    this.demandRow.classList.remove('demand-changed');
+    // Reflow tetikle, yoksa aynı animasyon sınıfı yeniden eklenince başlamaz.
+    void this.demandRow.offsetWidth;
+    this.demandRow.classList.add('demand-changed');
   }
 
   /** Arabaların üstündeki sipariş etiketlerini konumlandırır. */
@@ -611,6 +763,9 @@ export class Hud {
       this.renderFillAmount();
     }
     this.selectedFuel = fuel;
+    // Sayaç sıvısı verilen yakıtın rengini alsın: hem nozula basarken hem
+    // araca uzun basarak yapılan hızlı dolumda aynı yoldan geçiyoruz.
+    this.fillConsole.style.setProperty('--fill-color', findFuel(fuel).cssColor);
     this.fillActive = true;
     this.activeNozzle = nozzle;
     this.activePointerId = pointerId;
@@ -692,7 +847,7 @@ export class Hud {
       this.feedbackTimer = null;
       this.onServe?.(slotIndex, fuel, dispensedAmount);
       this.closeSheets();
-    }, 280);
+    }, overfilled ? FILL_OVERFILL_FEEDBACK_MS : FILL_SUCCESS_FEEDBACK_MS);
   }
 
   private failFillInteraction(message: string): void {
@@ -706,7 +861,7 @@ export class Hud {
     this.feedbackTimer = window.setTimeout(() => {
       this.feedbackTimer = null;
       this.resetFillConsole();
-    }, 650);
+    }, FILL_ERROR_FEEDBACK_MS);
   }
 
   private stopFillAnimation(): void {
@@ -732,6 +887,7 @@ export class Hud {
     this.targetPulsePlayed = false;
     this.fillConsole.classList.remove('filling', 'on-target', 'error', 'success', 'overfilled');
     this.fillConsole.classList.remove('direct');
+    this.fillConsole.style.removeProperty('--fill-color');
     this.fillHint.textContent = 'Doğru nozula basılı tut, hedefte bırak';
     this.renderFillAmount();
   }

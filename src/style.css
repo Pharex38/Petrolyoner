@@ -22,6 +22,11 @@
 
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+  /* Üst barın altındaki mutlak konumlu panellerin kayma miktarı.
+     Buradaki değer yalnızca ilk karede geçerli; hud.ts barın gerçek
+     yüksekliğini ölçüp bunu günceller (bkz. trackTopbarHeight). */
+  --hud-stack-shift: 42px;
 }
 
 * {
@@ -102,10 +107,136 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* --- Müşteri talebi göstergesi --- */
+
+.demand {
+  --demand-color: var(--text-dim);
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+  font-size: clamp(11px, 3vw, 13px);
+  font-weight: 600;
+  color: var(--demand-color);
+}
+
+.demand-arrow {
+  width: 1em;
+  font-size: 1.2em;
+  line-height: 1;
+  text-align: center;
+}
+
+.demand-label {
+  white-space: nowrap;
+}
+
+.demand-bar {
+  position: relative;
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.13);
+  overflow: hidden;
+}
+
+/* "Normal" talebin nerede olduğunu gösteren çentik. */
+.demand-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 62.5%;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.demand-bar > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: currentColor;
+  transition: width 0.35s ease;
+}
+
+.demand.level-cok-yuksek {
+  --demand-color: #4ad991;
+}
+.demand.level-yuksek {
+  --demand-color: #7ccf85;
+}
+.demand.level-normal {
+  /* Zemin rgba(255,255,255,0.13); dolgu bundan belirgin şekilde açık olmalı. */
+  --demand-color: #cbd3dc;
+}
+.demand.level-dusuk {
+  --demand-color: #e6b45a;
+}
+.demand.level-cok-dusuk {
+  --demand-color: #e2685f;
+}
+
+.demand.trend-up .demand-arrow {
+  animation: demand-nudge-up 1.5s ease-in-out infinite;
+}
+
+.demand.trend-down .demand-arrow {
+  animation: demand-nudge-down 1.5s ease-in-out infinite;
+}
+
+/* Kademe değiştiği anda kısa bir vurgu — oyuncu değişimi kaçırmasın. */
+.demand.demand-changed {
+  animation: demand-flash 0.9s ease-out;
+}
+
+@keyframes demand-nudge-up {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -2px;
+  }
+}
+
+@keyframes demand-nudge-down {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 2px;
+  }
+}
+
+@keyframes demand-flash {
+  0% {
+    background: color-mix(in srgb, var(--demand-color) 26%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demand .demand-arrow,
+  .demand.demand-changed {
+    animation: none;
+  }
+
+  .demand-bar > i {
+    transition: none;
+  }
+}
+
 .management-alert {
   position: absolute;
   z-index: 12;
-  top: calc(var(--safe-top) + 82px);
+  top: calc(var(--safe-top) + 82px + var(--hud-stack-shift));
   left: 50%;
   display: flex;
   align-items: center;
@@ -181,7 +312,7 @@ body {
 
 .stock-panel {
   position: absolute;
-  top: calc(var(--safe-top) + 88px);
+  top: calc(var(--safe-top) + 88px + var(--hud-stack-shift));
   left: 12px;
   width: min(190px, 49vw);
   padding: 9px;
@@ -340,7 +471,7 @@ body {
 
 .time-chip {
   position: absolute;
-  top: calc(var(--safe-top) + 88px);
+  top: calc(var(--safe-top) + 88px + var(--hud-stack-shift));
   right: 12px;
   display: flex;
   align-items: center;
@@ -359,7 +490,7 @@ body {
 
 .market-build {
   position: absolute;
-  top: calc(var(--safe-top) + 136px);
+  top: calc(var(--safe-top) + 136px + var(--hud-stack-shift));
   right: 12px;
   display: flex;
   flex: none;
@@ -409,7 +540,7 @@ body {
 
 .price-manage {
   position: absolute;
-  top: calc(var(--safe-top) + 184px);
+  top: calc(var(--safe-top) + 184px + var(--hud-stack-shift));
   right: 12px;
   display: flex;
   flex: none;
@@ -434,7 +565,7 @@ body {
 
 .management-open {
   position: absolute;
-  top: calc(var(--safe-top) + 232px);
+  top: calc(var(--safe-top) + 232px + var(--hud-stack-shift));
   right: 12px;
   display: flex;
   flex: none;
@@ -470,11 +601,11 @@ body {
 }
 
 .market-build[hidden] + .price-manage {
-  top: calc(var(--safe-top) + 136px);
+  top: calc(var(--safe-top) + 136px + var(--hud-stack-shift));
 }
 
 .market-build[hidden] ~ .management-open {
-  top: calc(var(--safe-top) + 184px);
+  top: calc(var(--safe-top) + 184px + var(--hud-stack-shift));
 }
 
 @keyframes market-build-pulse {
@@ -1514,13 +1645,20 @@ body {
 }
 
 .fill-liquid {
+  /* --fill-color'ı hud.ts, verilen yakıtın rengiyle #fill-console üzerine yazar. */
+  --liquid: var(--fill-color, var(--accent));
+
   width: 0;
   height: 100%;
   border-radius: inherit;
-  background:
-    linear-gradient(90deg, #237f73, #42d4be 72%, #b7fff2);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--liquid) 62%, #05100e),
+    var(--liquid) 72%,
+    color-mix(in srgb, var(--liquid) 45%, #ffffff)
+  );
   box-shadow:
-    0 0 12px rgba(66, 212, 190, 0.55),
+    0 0 12px color-mix(in srgb, var(--liquid) 55%, transparent),
     inset 0 1px rgba(255, 255, 255, 0.38);
   will-change: width;
 }
@@ -1928,7 +2066,7 @@ button:not(:disabled):active {
   }
 
   .stock-panel {
-    top: calc(var(--safe-top) + 106px);
+    top: calc(var(--safe-top) + 106px + var(--hud-stack-shift));
     left: 20px;
     width: 258px;
     padding: 12px;
@@ -1965,7 +2103,7 @@ button:not(:disabled):active {
   }
 
   .time-chip {
-    top: calc(var(--safe-top) + 106px);
+    top: calc(var(--safe-top) + 106px + var(--hud-stack-shift));
     right: 20px;
     min-width: 108px;
     padding: 11px 14px;
@@ -1982,23 +2120,23 @@ button:not(:disabled):active {
   }
 
   .market-build {
-    top: calc(var(--safe-top) + 164px);
+    top: calc(var(--safe-top) + 164px + var(--hud-stack-shift));
   }
 
   .price-manage {
-    top: calc(var(--safe-top) + 220px);
+    top: calc(var(--safe-top) + 220px + var(--hud-stack-shift));
   }
 
   .management-open {
-    top: calc(var(--safe-top) + 276px);
+    top: calc(var(--safe-top) + 276px + var(--hud-stack-shift));
   }
 
   .market-build[hidden] + .price-manage {
-    top: calc(var(--safe-top) + 164px);
+    top: calc(var(--safe-top) + 164px + var(--hud-stack-shift));
   }
 
   .market-build[hidden] ~ .management-open {
-    top: calc(var(--safe-top) + 220px);
+    top: calc(var(--safe-top) + 220px + var(--hud-stack-shift));
   }
 
   .car-label {

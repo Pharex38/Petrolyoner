@@ -42,12 +42,19 @@ Bilinen eksikler:
 - Kamera sabit — kaydırma/yakınlaştırma yok
 - Doldurma paneli açıkken alt sıradaki pompalar panelin altında kalıyor
 
+## Bu turda eklenenler
+
+- [x] Müşteri akışı göstergesi (üst bar, yön oku + kademe rengi)
+- [x] Pompacı: gelen aracı otomatik dolduran personel (komisyonlu)
+- [x] Trafik yönü ayarı (sağdan / soldan)
+- [x] Haritada kaydırma ve yakınlaştırma
+- [x] Yönetim/Fiyatlar paneli açıkken oyun duraklar
+
 ## v0.2 — Derinlik
 
 - [ ] Kuyruk: pompalar doluyken araçlar sıraya girsin
 - [x] Kurulmuş markette ödeme sırasında ek satış
 - [x] Nitelikli personel, özellikler, bordro, memnuniyet, sendika ve grev
-- [ ] Personel görevi: bir pompayı otomatik çalıştıran görevli
 - [x] Yakıt stoğu ve tanker çağırma
 - [x] Değişken toptan maliyet ve ikmal sırasında satış kilidi
 - [x] Çevre vergisi/cezası, sızıntı, protesto, temizlik ve greenwashing

@@ -9,6 +9,7 @@ import {
   type FuelStock,
 } from './fuel';
 import { normalizeManagementState } from './management';
+import { DEFAULT_TRAFFIC_SIDE, isTrafficSide } from './traffic';
 import {
   MARKET_ITEMS,
   clampMarketPrice,
@@ -162,6 +163,8 @@ function migrate(input: unknown): PlayerData | null {
     marketPrices,
     marketSales: Math.max(0, Math.floor(numberOr(raw.marketSales, 0))),
     management: normalizeManagementState(raw.management),
+    attendants: Math.max(0, Math.floor(numberOr(raw.attendants, 0))),
+    trafficSide: isTrafficSide(raw.trafficSide) ? raw.trafficSide : DEFAULT_TRAFFIC_SIDE,
     lastSeenUnixSeconds: numberOr(raw.lastSeenUnixSeconds, fallback.lastSeenUnixSeconds),
   };
 }
