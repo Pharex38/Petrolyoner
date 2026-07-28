@@ -221,24 +221,7 @@ export class ManagementPanel {
       `<section class="management-section">` +
         `<h3>Nitelikli personel</h3>` +
         state.workers.map((worker) => this.renderWorker(worker)).join('') +
-      `</section>` +
-      `<section class="management-section">` +
-        `<h3>Pompacılar</h3>` +
-        this.actionCard(
-          `${this.station.attendantCount}/${this.station.unlockedCount} pompa otomatik`,
-          this.station.attendantCount === 0
-            ? `Pompacı, beklemeye başlayan aracı kendisi doldurur ama tutarın ` +
-              `%${Math.round(this.station.attendantCommission * 100)}'ini alır. ` +
-              `Sen yetişirsen tam parayı alırsın.`
-            : `1–${this.station.attendantCount}. pompa otomatik. Otomatik servislerde ` +
-              `tutarın %${Math.round(this.station.attendantCommission * 100)}'i pompacıya gidiyor.`,
-          'hire-attendant',
-          this.station.canHireAttendant
-            ? `Pompacı tut · ${formatMoney(this.station.attendantCost())}`
-            : 'Her pompanın pompacısı var',
-          !this.station.canHireAttendant || !this.station.canAfford(this.station.attendantCost()),
-          'wage',
-        ) +
+        this.renderAttendantCard() +
       `</section>` +
       `<section class="management-section">` +
         `<h3>Çalışma koşulları</h3>` +
@@ -422,6 +405,39 @@ export class ManagementPanel {
               worker.id,
               true,
             )) +
+      `</article>`
+    );
+  }
+
+  /**
+   * Pompacı, şirket personeliyle aynı listede duruyor çünkü oyuncu için hepsi
+   * "işe alınan kişi". Farkı: maaş yerine servis başına komisyon alır ve
+   * istasyon katmanında yaşar (station.attendants), yönetim state'inde değil.
+   */
+  private renderAttendantCard(): string {
+    const hired = this.station.attendantCount;
+    const pumps = this.station.unlockedCount;
+    const commission = Math.round(this.station.attendantCommission * 100);
+    const cost = this.station.attendantCost();
+
+    // Diğer kartlarda bu satır "Rol · Özellik" biçiminde; başlığı tekrar etme.
+    const detail = hired === 0
+      ? `Pompa görevlisi · aracı kendi doldurur · %${commission} komisyon`
+      : `Pompa görevlisi · ${hired}/${pumps} pompa otomatik · %${commission} komisyon`;
+
+    return (
+      `<article class="worker-card">` +
+        `<span><strong>Pompacı${hired > 0 ? ` ×${hired}` : ''}</strong>` +
+        `<small>${detail}</small></span>` +
+        (this.station.canHireAttendant
+          ? this.button(
+              'hire-attendant',
+              `İşe al · ${formatMoney(cost)}`,
+              !this.station.canAfford(cost),
+              '',
+              true,
+            )
+          : `<b>Tam kadro<br><small>${hired}/${pumps} pompa</small></b>`) +
       `</article>`
     );
   }
