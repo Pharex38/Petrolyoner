@@ -42,8 +42,9 @@ import {
  * ölçekte görünür, oyuncu hepsini eşit kolaylıkta seçebilir.
  */
 
-const GRASS_COLOR = 0x6f985a;
-const LOT_COLOR = 0x50545b;
+const GRASS_COLOR = 0x7db85f;
+// Referanstaki gibi açık beton: saha yoldan ve asfalttan net ayrışsın.
+const LOT_COLOR = 0xc8c6bd;
 const ROAD_COLOR = 0x2c3139;
 const LINE_COLOR = 0xd9d5c8;
 const ROAD_LINE_COLOR = 0xf0d27d;
@@ -67,6 +68,12 @@ const PAN_THRESHOLD_PX = 12;
 const TARGET_HEIGHT = 17.5;
 
 /** İstasyonun sağındaki, NPC'lerin kullandığı ana yol. */
+/** İstasyon arsasının sınırları — yol tarafındaki kenar yolun kaldırımıyla hizalı. */
+const LOT_WIDTH = 13.5;
+const LOT_DEPTH = 30;
+const LOT_CENTER_X = -0.7;
+const LOT_CENTER_Z = 2.5;
+
 const ROAD_X = 7.75;
 const ROAD_WIDTH = 3.4;
 const ROAD_LENGTH = 140;
@@ -632,22 +639,28 @@ export class World {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // İstasyon betonu ekranın altına ve üstüne taşar; kamera döndüğünde arazi
-    // veya otoparkın keskin bir bitişi görünmez.
+    // İstasyon sınırlı bir arsa: market (-9.8), bina (-6.6), kapılar (-9.2 / 11.5)
+    // ve tanker cebi (15.2) sığacak kadar. Sonsuz şerit yerine çevresi çimenle
+    // biten bir mülk gibi okunsun diye kenarları kaldırımla kapatılıyor.
     const lot = new THREE.Mesh(
-      new THREE.BoxGeometry(12, 0.06, 120),
+      new THREE.BoxGeometry(LOT_WIDTH, 0.06, LOT_DEPTH),
       new THREE.MeshStandardMaterial({ color: LOT_COLOR, roughness: 0.94 }),
     );
-    lot.position.set(0, 0.03, -1);
+    lot.position.set(LOT_CENTER_X, 0.03, LOT_CENTER_Z);
     lot.receiveShadow = true;
     this.scene.add(lot);
+
+    this.addLotBoundary();
 
     const lineMaterial = new THREE.MeshStandardMaterial({ color: LINE_COLOR, roughness: 0.9 });
 
     // Sürüş şeridinin kenar çizgileri.
+    // Şerit yalnızca giriş ve çıkış kapıları arasında var.
+    const laneLength = Math.abs(ENTRY_Z - EXIT_Z);
+    const laneCenter = (ENTRY_Z + EXIT_Z) / 2;
     for (const lineX of [-1.18, 1.18]) {
-      const line = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.02, 108), lineMaterial);
-      line.position.set(lineX, 0.07, -1);
+      const line = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.02, laneLength), lineMaterial);
+      line.position.set(lineX, 0.07, laneCenter);
       this.scene.add(line);
     }
 
@@ -1142,6 +1155,37 @@ export class World {
     }
 
     return true;
+  }
+
+  /**
+   * Arsanın yol dışındaki üç kenarına kaldırım çeker. Yol tarafındaki kenar
+   * addRoad() içinde, giriş/çıkış kapıları için boşluk bırakılarak kuruluyor.
+   */
+  private addLotBoundary(): void {
+    const material = new THREE.MeshStandardMaterial({ color: 0xb9b5aa, roughness: 0.92 });
+    const height = 0.16;
+    const thickness = 0.16;
+
+    const left = LOT_CENTER_X - LOT_WIDTH / 2;
+    const near = LOT_CENTER_Z + LOT_DEPTH / 2;
+    const far = LOT_CENTER_Z - LOT_DEPTH / 2;
+
+    const addEdge = (
+      width: number,
+      depth: number,
+      x: number,
+      z: number,
+    ): void => {
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material);
+      edge.position.set(x, height / 2, z);
+      edge.castShadow = true;
+      edge.receiveShadow = true;
+      this.scene.add(edge);
+    };
+
+    addEdge(thickness, LOT_DEPTH, left, LOT_CENTER_Z);
+    addEdge(LOT_WIDTH, thickness, LOT_CENTER_X, near);
+    addEdge(LOT_WIDTH, thickness, LOT_CENTER_X, far);
   }
 
   private addIslands(): void {
