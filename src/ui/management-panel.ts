@@ -5,6 +5,7 @@ import type {
   WorkerState,
 } from '../game/management';
 import type { Station } from '../game/station';
+import { isTrafficSide, trafficSideLabel, type TrafficSide } from '../game/traffic';
 
 type ManagementTab = 'overview' | 'environment' | 'workers' | 'rivals' | 'economy';
 
@@ -25,6 +26,9 @@ export class ManagementPanel {
   private readonly tabButtons = [
     ...document.querySelectorAll<HTMLButtonElement>('[data-management-tab]'),
   ];
+  /** Trafik yönü sahneyi de yeniden kuruyor; asıl işi HUD'un sahibi yapar. */
+  onTrafficSide: ((side: TrafficSide) => void) | null = null;
+
   private activeTab: ManagementTab = 'overview';
   private nextRenderAt = 0;
   private feedbackTimer: number | null = null;
@@ -142,9 +146,39 @@ export class ManagementPanel {
         `<span><small>Ham petrol</small><strong>${Math.floor(state.storedCrude)} / ${Math.floor(state.storageCapacity)} varil</strong></span>` +
       `</div>` +
       `<section class="management-section">` +
+        `<h3>İstasyon ayarları</h3>` +
+        this.renderTrafficSideCard() +
+      `</section>` +
+      `<section class="management-section">` +
         `<h3>Son olaylar</h3>` +
         this.renderEventLog() +
       `</section>`
+    );
+  }
+
+  /** Şeritlerin yönü; giriş ve çıkış kapıları da bununla rol değiştirir. */
+  private renderTrafficSideCard(): string {
+    const active = this.station.trafficSide;
+    const sides: readonly TrafficSide[] = ['sag', 'sol'];
+
+    return (
+      `<article class="setting-card">` +
+        `<div class="setting-copy">` +
+          `<strong>Trafik yönü</strong>` +
+          `<small>Şeritler ${trafficSideLabel(active).toLocaleLowerCase('tr')} akıyor · ` +
+            `giriş ve çıkış kapıları yer değiştirir</small>` +
+        `</div>` +
+        `<div class="chips">` +
+          sides
+            .map(
+              (side) =>
+                `<button type="button" class="chip" data-management-action="traffic-side" ` +
+                `data-target="${side}" aria-pressed="${side === active}">` +
+                `${trafficSideLabel(side)}</button>`,
+            )
+            .join('') +
+        `</div>` +
+      `</article>`
     );
   }
 
@@ -513,6 +547,11 @@ export class ManagementPanel {
       result = this.station.tryHireAttendant()
         ? { ok: true, message: `${this.station.attendantCount}. pompacı işe alındı.` }
         : { ok: false, message: 'Pompacı tutulamadı — para ya da boş pompa yok.' };
+    }
+    if (action === 'traffic-side' && isTrafficSide(target)) {
+      if (target === this.station.trafficSide) return;
+      this.onTrafficSide?.(target);
+      result = { ok: true, message: `Trafik ${trafficSideLabel(target).toLocaleLowerCase('tr')} akacak.` };
     }
     if (action === 'upgrade-safety') result = management.upgradePolicy('safety');
     if (action === 'upgrade-wage') result = management.upgradePolicy('wage');

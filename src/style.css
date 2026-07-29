@@ -1324,10 +1324,57 @@ body {
 .management-action-card,
 .worker-card,
 .rival-card,
-.storage-card {
+.storage-card,
+.setting-card {
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.03);
+}
+
+.setting-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px;
+}
+
+.setting-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.setting-copy strong {
+  font-size: 12px;
+}
+
+.setting-copy small {
+  color: var(--text-dim);
+  font-size: 9px;
+}
+
+.chips {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.chip {
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.chip[aria-pressed='true'] {
+  border-color: transparent;
+  background: var(--accent);
+  color: #08201c;
 }
 
 .management-action-card {

@@ -14,7 +14,7 @@ import {
   type Station,
 } from '../game/station';
 import { findSlot } from '../game/slots';
-import { isTrafficSide, type TrafficSide } from '../game/traffic';
+import type { TrafficSide } from '../game/traffic';
 import type { World } from '../scene/world';
 import { ManagementPanel } from './management-panel';
 
@@ -101,7 +101,6 @@ export class Hud {
 
   private readonly moneyLabel = requireElement('money');
   private readonly statsLabel = requireElement('stats');
-  private readonly trafficSideChips = requireElement('traffic-side-chips');
   private readonly demandRow = requireElement('demand');
   private readonly demandArrow = requireElement('demand-arrow');
   private readonly demandLabel = requireElement('demand-label');
@@ -176,6 +175,8 @@ export class Hud {
   constructor(station: Station) {
     this.station = station;
     this.managementPanel = new ManagementPanel(station);
+    // Trafik yönü istasyon ayarı; yönetim panelindeki Özet sekmesinde duruyor.
+    this.managementPanel.onTrafficSide = (side) => this.onTrafficSide?.(side);
 
     this.trackTopbarHeight();
     this.buildStockBars();
@@ -206,16 +207,6 @@ export class Hud {
     requireElement('management-open').addEventListener('click', () => {
       this.openManagementSheet();
     });
-
-    for (const chip of this.trafficSideChips.children) {
-      const side = (chip as HTMLElement).dataset.trafficSide;
-      if (!isTrafficSide(side)) continue;
-
-      chip.addEventListener('click', () => {
-        this.onTrafficSide?.(side);
-        this.refreshTrafficSideChips();
-      });
-    }
 
     requireElement('offline-continue').addEventListener('click', () => {
       this.offlinePanel.hidden = true;
@@ -301,15 +292,7 @@ export class Hud {
     new ResizeObserver(apply).observe(topbar);
   }
 
-  private refreshTrafficSideChips(): void {
-    for (const chip of this.trafficSideChips.children) {
-      const side = (chip as HTMLElement).dataset.trafficSide;
-      chip.setAttribute('aria-pressed', String(side === this.station.trafficSide));
-    }
-  }
-
   openPricingSheet(): void {
-    this.refreshTrafficSideChips();
     this.closeSheets();
     for (const refresh of this.refreshPriceControls) refresh();
     this.marketPricingSection.hidden = !this.station.marketBuilt;

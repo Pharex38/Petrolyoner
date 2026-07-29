@@ -41,12 +41,14 @@ export const ENTRY_Z = 11.5;
 /** Servisi biten araçların ayrı bir kapıdan ana yola katıldığı kavşak. */
 export const EXIT_Z = -9.2;
 /**
- * Sonradan kurulabilen market ve şantiyesi, ana araç koridorundan ayrı sol
- * servis cebinde durur. Böylece ne kazı alanı ne de bina sürüş çizgilerini
- * keser.
+ * Sonradan kurulabilen market ve şantiyesi, sol pompa sırasının arkasında,
+ * arsanın sol kenarı boyunca uzanır. Uzun ekseni z'ye paralel olduğu için
+ * vitrin pompalara bakar; ne kazı alanı ne de bina sürüş çizgilerini keser.
  */
-export const MARKET_X = -5.05;
-export const MARKET_Z = -9.8;
+export const MARKET_X = -7.6;
+export const MARKET_Z = 0;
+/** Binayı ve şantiyeyi çeyrek tur çevirir: vitrin +x'e, yani pompalara bakar. */
+export const MARKET_ROTATION_Y = Math.PI / 2;
 export const LANE_X = 0;
 
 export function findSlot(index: number): SlotDefinition | undefined {

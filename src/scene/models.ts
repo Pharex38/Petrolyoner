@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { FUELS, findFuel, type FuelType } from '../game/fuel';
-import { MARKET_X, MARKET_Z } from '../game/slots';
+import { MARKET_ROTATION_Y, MARKET_X, MARKET_Z } from '../game/slots';
 
 /**
  * Tüm modeller primitif geometriden kuruluyor — dış dosya yok, repo hafif kalıyor.
@@ -1013,6 +1013,7 @@ export function setCarEmergencyLights(car: THREE.Group, active: boolean, alterna
 export function createStationBuilding(): THREE.Group {
   const group = new THREE.Group();
   group.position.set(MARKET_X, 0, MARKET_Z);
+  group.rotation.y = MARKET_ROTATION_Y;
 
   const wall = new THREE.Mesh(
     new THREE.BoxGeometry(7.2, 1.7, 2.2),

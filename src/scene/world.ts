@@ -8,6 +8,7 @@ import {
   LANE_X,
   stationEntryZ,
   stationExitZ,
+  MARKET_ROTATION_Y,
   MARKET_X,
   MARKET_Z,
   SLOTS,
@@ -69,9 +70,10 @@ const TARGET_HEIGHT = 17.5;
 
 /** İstasyonun sağındaki, NPC'lerin kullandığı ana yol. */
 /** İstasyon arsasının sınırları — yol tarafındaki kenar yolun kaldırımıyla hizalı.
- *  Sol kenar market binasını kapsamak zorunda: bina MARKET_X (-5.05) merkezli ve
- *  çatısı 7.65 geniş, yani x = -8.88'e kadar uzanıyor. Sağ kenar (6.05) yola
- *  bakıyor, o yüzden genişletme hep soldan yapılmalı. */
+ *  Sol kenar market binasını kapsamak zorunda: bina MARKET_X (-7.6) merkezli ve
+ *  çeyrek tur çevrili, yani çatısının 2.7'lik derinliği x eksenine düşüyor ve
+ *  x = -8.95'e kadar uzanıyor. Sağ kenar (6.05) yola bakıyor, o yüzden
+ *  genişletme hep soldan yapılmalı. */
 const LOT_WIDTH = 15.6;
 const LOT_DEPTH = 30;
 const LOT_CENTER_X = -1.75;
@@ -500,7 +502,8 @@ export class World {
     }
 
     const marketLight = new THREE.PointLight(0xffd99a, 0, 9, 1.7);
-    marketLight.position.set(MARKET_X, 3.1, MARKET_Z + 1.4);
+    // Vitrin +x'e baktığı için saçak ışığı da o tarafta durmalı.
+    marketLight.position.set(MARKET_X + 1.4, 3.1, MARKET_Z);
     marketLight.castShadow = false;
     this.marketNightLight = marketLight;
     this.stationNightLights.push(marketLight);
@@ -673,6 +676,7 @@ export class World {
     // Düz beton plaka yerine, market kurulana kadar okunabilir bir şantiye.
     const constructionSite = createMarketConstructionSite();
     constructionSite.position.set(MARKET_X, 0, MARKET_Z);
+    constructionSite.rotation.y = MARKET_ROTATION_Y;
     this.marketConstructionSite = constructionSite;
     this.scene.add(constructionSite);
 

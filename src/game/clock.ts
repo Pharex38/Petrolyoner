@@ -4,7 +4,7 @@
  */
 
 /** Bir oyun gününün gerçek süresi. */
-export const DAY_CYCLE_SECONDS = 600;
+export const DAY_CYCLE_SECONDS = 300;
 
 /** Yeni oyun sabah 08:00'de açılır. */
 export const DAY_START_PHASE = 8 / 24;
