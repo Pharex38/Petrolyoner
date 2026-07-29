@@ -56,12 +56,22 @@ station.onServed = (car) => {
     screen.x,
     screen.y,
   );
+  let detailOffset = 24;
+  if (car.creditRepayment > 0) {
+    hud.spawnFloater(
+      `-${formatMoney(car.creditRepayment)} acil kredi`,
+      screen.x,
+      screen.y + detailOffset,
+      true,
+    );
+    detailOffset += 24;
+  }
   if (car.wastedLiters > 0.01) {
     const wastedCost = Math.round(car.wastedLiters * findFuel(car.fuel).wholesalePerLiter);
     hud.spawnFloater(
       `-${formatMoney(wastedCost)} fazla yakıt`,
       screen.x,
-      screen.y + 24,
+      screen.y + detailOffset,
       true,
     );
   }
@@ -240,11 +250,21 @@ hud.onTrafficSide = (side) => {
   world.setTrafficSide(side);
 };
 
-hud.onRestock = (fuel) => {
-  if (world.isFuelDeliveryActive) return 'busy';
-  const result = station.tryRestock(fuel);
-  if (result === 'ok') world.startFuelDelivery(fuel);
-  return result;
+hud.onRestock = (fuel, liters) => {
+  if (!world.canRequestFuelDelivery) return 'busy';
+  const result = station.tryRestock(fuel, liters);
+  if (result !== 'ok') return result;
+
+  const delivery = world.startFuelDelivery(fuel);
+  return delivery === 'queued' ? 'queued' : delivery === 'started' ? 'ok' : 'busy';
+};
+hud.onEmergencyRestock = (fuel) => {
+  if (!world.canRequestFuelDelivery) return 'busy';
+  const result = station.tryEmergencyFuelCredit(fuel);
+  if (result !== 'ok') return result;
+
+  const delivery = world.startFuelDelivery(fuel);
+  return delivery === 'queued' ? 'queued' : delivery === 'started' ? 'ok' : 'busy';
 };
 hud.onBuildMarket = () => {
   const result = station.tryBuildMarket();

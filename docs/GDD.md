@@ -51,10 +51,19 @@ basılı tuttuğu sürece sayaç akar ve hedef aralığında bırakır.
 
 Her yakıtın 420 litrelik ayrı yeraltı tankı vardır. Servis, sipariş tutarını yakıtın
 litre fiyatına bölerek stoktan düşer. Sol üstteki üç bar kalan litreyi gösterir;
-bara dokunmak ücretli 140 litrelik tanker ikmali çağırır. Tanker ana yoldan trafik
-kurallarına uyarak gelir, servis cebine girer ve hortumla boşaltır. İkmal sürerken
-ilgili yakıt güvenlik nedeniyle satılamaz; stok boşaltma bitince artar. Offline
-vardiya da stok tüketir ve yakıt biterse kazanç durur.
+bara dokunmak ücretli 10, 30 veya 140 litrelik tanker ikmali çağırır. Tanker ana
+yoldan trafik kurallarına uyarak gelir, servis cebine girer ve hortumla boşaltır.
+İkmal sürerken ilgili yakıt güvenlik nedeniyle satılamaz; stok boşaltma bitince artar.
+Offline vardiya da stok tüketir ve yakıt biterse kazanç durur.
+Hortum kapanıp tanker istasyondan çıkışa geçtiği anda sonraki ikmal siparişi
+verilebilir; eski tanker yolu açana kadar yeni tanker güvenli sırada bekler.
+
+Müşteri üretimi, stokta karşılanabilen siparişleri olan yakıta ağırlık verir; yine de
+az sayıda sürücü başka yakıt isteyebilir. Böylece düşük stokta servis döngüsü çalışır
+kalırken depo planlaması önemini korur. Kasa sıfırken ve hiçbir yakıt en küçük siparişi
+bile karşılayamazken bir kez **acil ikmal kredisi** açılır: oyuncu 20 L yakıt seçer,
+peşin ödeme yapmaz ve borç sonraki başarılı yakıt satışlarının %20'sinden kesilerek
+kapanır. Normal küçük ikmal alınabildiği sürece bu yardım görünmez.
 
 Litre fiyatları **Fiyatlar** panelinden ₺1 adımla belirlenir. Düşük fiyat daha sık
 müşteri getirir; yüksek fiyat aynı sipariş tutarında daha az litre harcatır fakat
@@ -80,6 +89,8 @@ kazancı ve uzun vadeli yatırım kararlarını değiştirir.
 - Orta karbon periyodik çevre vergisi doğurur. Yüksek karbon veya sızıntı
   denetimde daha ağır para cezası, itibar/halk desteği kaybı ve istasyon
   girişinde görünür protesto doğurur.
+- Denetimler kasayı sıfırlamaz: tahsilat mevcut kasanın sınırlı bir payıdır;
+  kasa boşken yeni ceza uyarıları durur ve oyuncu servis vererek toparlanır.
 - Güvenlik yatırımı kaza, sızıntı ve ceza ihtimalini azaltır.
 - Gerçek temizlik sızıntı riskini düşürür. Yeşil imaj kampanyası yalnızca kamuoyu
   ve itibarı yükseltir; karbon ile sızıntıyı bilerek değiştirmez.
@@ -147,7 +158,7 @@ doğrudan kapasite demek. Kuyruk mekaniği bilerek v0.1'e alınmadı (bkz. Açı
 | Dolum sayacı | ₺150/sn |
 | Hortum bitiriş animasyonu | 1,15 sn |
 | Depo kapasitesi | 420 L / yakıt |
-| Tanker partisi | 140 L |
+| Tanker partisi | 10 / 30 / 140 L |
 | Tanker boşaltma | 6,2 sn + görünür giriş/çıkış rotası |
 | Ayrılma | 2,2 sn |
 
@@ -205,6 +216,8 @@ Reklam ağırlıklı, IAP destekli. Agresif değil.
   gökyüzünü hareketlendirir
 - Tanker ve çekici ana yoldan gelir; çekici müşteriyi ayrılmış pompanın park
   konumuna doğrudan rampayla indirir
+- Gece, sahanın çevresi kısa soğuk beyaz direklerle; ana yol ise aşağı yönlü
+  sıcak sokak lambalarıyla okunur kalır.
 - Depolama yatırımları istasyon kenarında metal tanklar olarak görünür; protesto
   süresince pankartlı kalabalık girişte kalır
 

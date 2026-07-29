@@ -269,6 +269,11 @@ interface FuelDelivery {
   exitRoute: THREE.CatmullRomCurve3 | null;
 }
 
+interface StationNightLight {
+  readonly light: THREE.PointLight;
+  readonly nightIntensity: number;
+}
+
 export type WorldPick =
   | {
       readonly slotIndex: number;
@@ -369,7 +374,7 @@ export class World {
   private readonly rainSkyColor = new THREE.Color(0x647582);
   private readonly hemisphereLight = new THREE.HemisphereLight(0xdce9f5, 0x5a5f66, 1.6);
   private readonly sunLight = new THREE.DirectionalLight(0xfff3dd, 2.1);
-  private readonly stationNightLights: THREE.PointLight[] = [];
+  private readonly stationNightLights: StationNightLight[] = [];
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private readonly projectionScratch = new THREE.Vector3();
@@ -403,6 +408,8 @@ export class World {
   private emergencyVehicle: EmergencyVehicle | null = null;
   private rescueDelivery: RescueDelivery | null = null;
   private fuelDelivery: FuelDelivery | null = null;
+  /** Çıkıştaki tankerin arkasından güvenle başlatılacak tek ikmal siparişi. */
+  private queuedFuelDelivery: FuelType | null = null;
   private stationRouteOwnerId: number | null = null;
   private marketBuilding: THREE.Group | null = null;
   private marketConstructionSite: THREE.Group | null = null;
@@ -492,12 +499,12 @@ export class World {
 
     this.scene.add(sun);
 
-    // Pompa çevresindeki lambalar yalnızca geceleri güçlenir.
+    // Pompa çevresindeki sıcak çalışma lambaları yalnızca geceleri güçlenir.
     for (const [x, z] of [[-2.3, 1.8], [2.3, 1.8]] as const) {
       const light = new THREE.PointLight(0xffd99a, 0, 9, 1.7);
       light.position.set(x, 3.1, z);
       light.castShadow = false;
-      this.stationNightLights.push(light);
+      this.addStationNightLight(light, 18);
       this.scene.add(light);
     }
 
@@ -506,8 +513,71 @@ export class World {
     marketLight.position.set(MARKET_X + 1.4, 3.1, MARKET_Z);
     marketLight.castShadow = false;
     this.marketNightLight = marketLight;
-    this.stationNightLights.push(marketLight);
+    this.addStationNightLight(marketLight, 18);
     this.scene.add(marketLight);
+
+    this.addStationPerimeterLights();
+  }
+
+  private addStationNightLight(
+    light: THREE.PointLight,
+    nightIntensity: number,
+  ): void {
+    this.stationNightLights.push({ light, nightIntensity });
+  }
+
+  /** Sahanın sınırlarını geceleri okunur yapan kısa, soğuk beyaz çevre lambaları. */
+  private addStationPerimeterLights(): void {
+    const poleMaterial = new THREE.MeshStandardMaterial({
+      color: 0x4e5960,
+      roughness: 0.48,
+      metalness: 0.56,
+    });
+    const glassMaterial = new THREE.MeshStandardMaterial({
+      color: 0xf7fbff,
+      emissive: 0xf4f8ff,
+      emissiveIntensity: 2.2,
+      roughness: 0.2,
+    });
+    const baseGeometry = new THREE.CylinderGeometry(0.14, 0.17, 0.16, 10);
+    const poleGeometry = new THREE.CylinderGeometry(0.045, 0.062, 2.65, 8);
+    const capGeometry = new THREE.CylinderGeometry(0.16, 0.12, 0.1, 10);
+    const lampGeometry = new THREE.SphereGeometry(0.13, 10, 7);
+    const positions = [
+      [-8.65, -10.8],
+      [-8.65, 15.0],
+      [-1.7, 16.05],
+      [5.45, 15.0],
+      [5.45, -10.8],
+    ] as const;
+
+    for (const [x, z] of positions) {
+      const fixture = new THREE.Group();
+      fixture.position.set(x, 0, z);
+
+      const base = new THREE.Mesh(baseGeometry, poleMaterial);
+      base.position.y = 0.08;
+      fixture.add(base);
+
+      const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+      pole.position.y = 1.44;
+      fixture.add(pole);
+
+      const cap = new THREE.Mesh(capGeometry, poleMaterial);
+      cap.position.y = 2.8;
+      fixture.add(cap);
+
+      const lamp = new THREE.Mesh(lampGeometry, glassMaterial);
+      lamp.position.y = 2.69;
+      fixture.add(lamp);
+      this.scene.add(fixture);
+
+      const light = new THREE.PointLight(0xf3f8ff, 0, 8.5, 1.7);
+      light.position.set(x, 2.65, z);
+      light.castShadow = false;
+      this.addStationNightLight(light, 13);
+      this.scene.add(light);
+    }
   }
 
   /**
@@ -591,8 +661,16 @@ export class World {
     return this.nightTime ? '☾' : '☀';
   }
 
-  get isFuelDeliveryActive(): boolean {
-    return this.fuelDelivery !== null;
+  /**
+   * Tanker boşaltmayı bitirip istasyondan çıkışa geçtiğinde yeni sipariş kabul
+   * edilir. Yeni tanker, eskisi yolu tamamen açınca görünür biçimde yola çıkar.
+   */
+  get canRequestFuelDelivery(): boolean {
+    const delivery = this.fuelDelivery;
+    return (
+      delivery === null ||
+      (delivery.phase === 'departing' && this.queuedFuelDelivery === null)
+    );
   }
 
   /** Çevre/kaçakçılık tepkisini sahada görünür protestoculara çevirir. */
@@ -1561,8 +1639,8 @@ export class World {
       lerp(0.72, 1.08, daylight) *
       (1 - this.ambient.rainStrength * 0.12);
 
-    for (const light of this.stationNightLights) {
-      light.intensity = lerp(18, 0, daylight);
+    for (const entry of this.stationNightLights) {
+      entry.light.intensity = lerp(entry.nightIntensity, 0, daylight);
     }
     this.ambient.setDaylight(daylight);
 
@@ -1635,10 +1713,25 @@ export class World {
     }
   }
 
-  /** Ücreti ödenen ikmal için ana yoldan gerçek bir tanker çağırır. */
-  startFuelDelivery(fuel: FuelType): boolean {
-    if (this.fuelDelivery !== null) return false;
+  /**
+   * Ücreti ödenen ikmali başlatır. Çıkıştaki tanker hâlâ yoldaysa sipariş
+   * sıraya alınır; iki uzun araç aynı şeritte üst üste doğmaz.
+   */
+  startFuelDelivery(fuel: FuelType): 'started' | 'queued' | 'busy' {
+    const current = this.fuelDelivery;
+    if (current !== null) {
+      if (current.phase !== 'departing' || this.queuedFuelDelivery !== null) {
+        return 'busy';
+      }
+      this.queuedFuelDelivery = fuel;
+      return 'queued';
+    }
 
+    this.launchFuelDelivery(fuel);
+    return 'started';
+  }
+
+  private launchFuelDelivery(fuel: FuelType): void {
     const truck = createFuelTanker(fuel);
     truck.scale.setScalar(0.88);
     truck.position.set(
@@ -1666,7 +1759,6 @@ export class World {
       entryRoute: null,
       exitRoute: null,
     };
-    return true;
   }
 
   private updateFuelDelivery(deltaSeconds: number): void {
@@ -1843,6 +1935,10 @@ export class World {
     this.scene.remove(delivery.truck);
     disposeEffect(delivery.truck);
     this.fuelDelivery = null;
+
+    const queuedFuel = this.queuedFuelDelivery;
+    this.queuedFuelDelivery = null;
+    if (queuedFuel !== null) this.launchFuelDelivery(queuedFuel);
   }
 
   private createFuelDeliveryEntryRoute(

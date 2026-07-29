@@ -13,11 +13,16 @@ import { createInitialMarketPrices, type MarketPrices } from './market';
 import { DAY_START_PHASE, type DayOpening } from './clock';
 import { DEFAULT_TRAFFIC_SIDE, type TrafficSide } from './traffic';
 
-export const SAVE_VERSION = 9;
+export const SAVE_VERSION = 11;
+export const STATION_NAME_MAX_LENGTH = 28;
 
 export interface PlayerData {
   saveVersion: number;
   money: number;
+  /** Oyuncunun ilk açılışta verdiği, arayüzde görünen istasyon adı. */
+  stationName: string;
+  /** Kasa kilidini açan acil ikmalin, sonraki yakıt satışlarından tahsil edilecek borcu. */
+  emergencyFuelCreditDebt: number;
   totalEarned: number;
   servedCars: number;
   /** Sabrı taşan veya yanlış yakıt verilen araçlar. */
@@ -56,10 +61,18 @@ export function nowUnixSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
+/** Boşlukları sadeleştirip hem kayıt hem arayüz için güvenli adı döndürür. */
+export function normalizeStationName(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().replace(/\s+/g, ' ').slice(0, STATION_NAME_MAX_LENGTH);
+}
+
 export function createNewGame(): PlayerData {
   return {
     saveVersion: SAVE_VERSION,
     money: 0,
+    stationName: '',
+    emergencyFuelCreditDebt: 0,
     totalEarned: 0,
     servedCars: 0,
     missedCars: 0,

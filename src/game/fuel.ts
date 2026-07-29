@@ -50,6 +50,10 @@ export const AMOUNT_OPTIONS: readonly number[] = Array.from(
 export const FUEL_CAPACITY_LITERS = 420;
 export const INITIAL_FUEL_LITERS = 280;
 export const RESTOCK_BATCH_LITERS = 140;
+/** Depo panelindeki küçükten büyüğe ikmal seçenekleri. */
+export const RESTOCK_OPTIONS_LITERS: readonly number[] = [10, 30, RESTOCK_BATCH_LITERS];
+/** Kasa kilitlendiğinde bir kez verilebilen, küçük toparlanma partisi. */
+export const EMERGENCY_CREDIT_LITERS = 20;
 export const FUEL_PRICE_STEP = 1;
 
 export type FuelStock = Record<FuelType, number>;

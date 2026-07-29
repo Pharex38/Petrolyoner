@@ -29,6 +29,7 @@
 
       <div id="hud">
         <header class="topbar">
+          <div class="station-name" id="station-name-label">Yeni istasyon</div>
           <div class="money" id="money">₺0</div>
           <div class="stats" id="stats">0 araç dolduruldu</div>
           <div class="demand" id="demand">
@@ -52,6 +53,13 @@
             <small id="stock-message">İkmal için bara dokun</small>
           </div>
           <div id="stock-bars" class="stock-bars"></div>
+          <button id="emergency-refuel" class="emergency-refuel" type="button" hidden>
+            <span aria-hidden="true">✦</span>
+            <span>
+              <strong>Acil ikmal kredisi</strong>
+              <small id="emergency-refuel-text">Kasa kilitlenirse burada görünür</small>
+            </span>
+          </button>
         </aside>
 
         <div class="time-chip" aria-label="Oyun günü ve saati">
@@ -112,6 +120,26 @@
             <button id="unlock-cancel" class="ghost" type="button">Vazgeç</button>
             <button id="unlock-confirm" type="button">Aç</button>
           </div>
+        </div>
+      </div>
+
+      <!-- Küçük/normal ikmal ve kasa tamamen kilitlendiğinde acil kredi seçimi -->
+      <div id="restock-sheet" class="sheet" hidden>
+        <div class="sheet-inner restock-sheet-inner">
+          <div class="restock-header">
+            <div>
+              <p class="order-label" id="restock-kicker">Depo ikmali</p>
+              <h2 id="restock-title">İkmal seç</h2>
+            </div>
+            <button
+              id="restock-close"
+              class="close-button"
+              type="button"
+              aria-label="İkmal panelini kapat"
+            >×</button>
+          </div>
+          <p id="restock-note" class="restock-note"></p>
+          <div id="restock-options" class="restock-options"></div>
         </div>
       </div>
 
@@ -199,6 +227,27 @@
           <p id="offline-text"></p>
           <button id="offline-continue" type="button">Devam</button>
         </div>
+      </div>
+
+      <!-- İlk açılışta istasyonun kalıcı adı alınır. -->
+      <div id="station-name-overlay" class="overlay station-name-overlay" hidden>
+        <form id="station-name-form" class="dialog station-name-dialog">
+          <p class="order-label">Yeni işletme</p>
+          <h2>İstasyonunun adı ne olsun?</h2>
+          <p>Müşterilerin uğrayacağı istasyona kendi adını ver.</p>
+          <label class="station-name-field" for="station-name-input">
+            <span>İstasyon adı</span>
+            <input
+              id="station-name-input"
+              type="text"
+              maxlength="28"
+              autocomplete="organization"
+              placeholder="Örn. Kuzey Yıldızı"
+              required
+            />
+          </label>
+          <button type="submit">İstasyonu aç</button>
+        </form>
       </div>
     </div>
 

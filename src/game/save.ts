@@ -1,5 +1,5 @@
 import type { PlayerData } from './state';
-import { SAVE_VERSION, createNewGame } from './state';
+import { SAVE_VERSION, createNewGame, normalizeStationName } from './state';
 import {
   FUEL_CAPACITY_LITERS,
   FUELS,
@@ -153,6 +153,10 @@ function migrate(input: unknown): PlayerData | null {
   return {
     saveVersion: SAVE_VERSION,
     money: numberOr(raw.money, 0),
+    // v10: Eski kayıtlar için boş bırakılır; oyun sonraki açılışta adı ister.
+    stationName: normalizeStationName(raw.stationName),
+    // v11: Acil ikmal kredisi eski kayıtlarda yoktur; borçsuz devam edilir.
+    emergencyFuelCreditDebt: Math.max(0, numberOr(raw.emergencyFuelCreditDebt, 0)),
     totalEarned: numberOr(raw.totalEarned, 0),
     servedCars: numberOr(raw.servedCars, 0),
     missedCars: numberOr(raw.missedCars, 0),

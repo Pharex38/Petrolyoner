@@ -83,7 +83,7 @@ raporlanmaz. HUD paneli açıkken `hud.isGamePaused` true olur, döngü durur.
 
 ### Kayıt ve şema göçü
 
-`SAVE_VERSION` şu an **9**, localStorage anahtarı `petrolyoner.save`.
+`SAVE_VERSION` şu an **11**, localStorage anahtarı `petrolyoner.save`.
 `PlayerData`'ya alan eklerken:
 
 1. `state.ts` içinde alanı ve `createNewGame()` varsayılanını ekle

@@ -1,14 +1,16 @@
 import type { DemandLevel, FuelInfo, FuelType } from '../game/fuel';
-import { AMOUNT_OPTIONS, FUELS, findFuel } from '../game/fuel';
+import { AMOUNT_OPTIONS, FUELS, RESTOCK_OPTIONS_LITERS, findFuel } from '../game/fuel';
 import type { DayReport } from '../game/clock';
 import { formatDuration, formatMoney } from '../game/format';
 import type { ManagementEvent } from '../game/management';
 import { MARKET_ITEMS } from '../game/market';
 import {
   MARKET_BUILD_COST,
+  EMERGENCY_CREDIT_REPAYMENT_RATE,
   type BuildMarketResult,
   type Car,
   type DemandTrend,
+  type EmergencyFuelCreditResult,
   type OfflineReport,
   type RestockResult,
   type Station,
@@ -91,7 +93,8 @@ interface CarLabelEntry {
 export class Hud {
   onServe: ((slotIndex: number, fuel: FuelType, amount: number) => void) | null = null;
   onUnlock: ((slotIndex: number) => void) | null = null;
-  onRestock: ((fuel: FuelType) => RestockResult) | null = null;
+  onRestock: ((fuel: FuelType, liters: number) => RestockResult) | null = null;
+  onEmergencyRestock: ((fuel: FuelType) => EmergencyFuelCreditResult) | null = null;
   onBuildMarket: (() => BuildMarketResult) | null = null;
   onTrafficSide: ((side: TrafficSide) => void) | null = null;
 
@@ -100,6 +103,7 @@ export class Hud {
   private readonly reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   private readonly moneyLabel = requireElement('money');
+  private readonly stationNameLabel = requireElement('station-name-label');
   private readonly statsLabel = requireElement('stats');
   private readonly demandRow = requireElement('demand');
   private readonly demandArrow = requireElement('demand-arrow');
@@ -113,6 +117,8 @@ export class Hud {
   private readonly carLabelLayer = requireElement('car-labels');
   private readonly stockBars = requireElement('stock-bars');
   private readonly stockMessage = requireElement('stock-message');
+  private readonly emergencyRefuelButton = requireElement<HTMLButtonElement>('emergency-refuel');
+  private readonly emergencyRefuelText = requireElement('emergency-refuel-text');
   private readonly clockLabel = requireElement('game-clock');
   private readonly dayLabel = requireElement('game-day');
   private readonly dayIcon = requireElement('day-icon');
@@ -136,6 +142,12 @@ export class Hud {
   private readonly unlockText = requireElement('unlock-text');
   private readonly unlockConfirm = requireElement<HTMLButtonElement>('unlock-confirm');
 
+  private readonly restockSheet = requireElement('restock-sheet');
+  private readonly restockKicker = requireElement('restock-kicker');
+  private readonly restockTitle = requireElement('restock-title');
+  private readonly restockNote = requireElement('restock-note');
+  private readonly restockOptions = requireElement('restock-options');
+
   private readonly pricingSheet = requireElement('pricing-sheet');
   private readonly pricingNote = requireElement('pricing-note');
   private readonly fuelPriceList = requireElement('fuel-price-list');
@@ -148,6 +160,10 @@ export class Hud {
   private readonly daySummaryPanel = requireElement('day-summary');
   private readonly daySummaryTitle = requireElement('day-summary-title');
   private readonly daySummaryRows = requireElement('day-summary-rows');
+
+  private readonly stationNamePanel = requireElement('station-name-overlay');
+  private readonly stationNameForm = requireElement<HTMLFormElement>('station-name-form');
+  private readonly stationNameInput = requireElement<HTMLInputElement>('station-name-input');
 
   private readonly carLabels = new Map<number, CarLabelEntry>();
   private readonly lastText = new Map<HTMLElement, string>();
@@ -183,6 +199,13 @@ export class Hud {
     this.buildFuelNozzles();
     this.buildPriceControls();
 
+    requireElement('restock-close').addEventListener('click', () => {
+      this.closeSheets();
+    });
+    this.emergencyRefuelButton.addEventListener('click', () => {
+      this.openEmergencyRestockSheet();
+    });
+
     requireElement('serve-cancel').addEventListener('click', () => {
       this.closeSheets();
     });
@@ -216,6 +239,22 @@ export class Hud {
       this.daySummaryPanel.hidden = true;
     });
 
+    this.stationNameForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (!this.station.setStationName(this.stationNameInput.value)) {
+        this.stationNameInput.setCustomValidity('İstasyon adı boş bırakılamaz.');
+        this.stationNameInput.reportValidity();
+        return;
+      }
+      this.stationNameInput.value = this.station.stationName;
+      this.applyStationName();
+      this.stationNamePanel.hidden = true;
+      navigator.vibrate?.([18, 32, 20]);
+    });
+    this.stationNameInput.addEventListener('input', () => {
+      this.stationNameInput.setCustomValidity('');
+    });
+
     this.marketBuildButton.hidden = this.station.marketBuilt;
     this.marketBuildButton.addEventListener('click', () => {
       const result = this.onBuildMarket?.() ?? 'money';
@@ -228,6 +267,9 @@ export class Hud {
         this.marketBuildButton.classList.remove('building');
       }, this.reduceMotion ? 0 : 820);
     });
+
+    this.applyStationName();
+    if (this.station.stationName.length === 0) this.openStationNamePrompt();
   }
 
   // ---------- Paneller ----------
@@ -312,6 +354,7 @@ export class Hud {
     this.cancelFillInteraction();
     this.serveSheet.hidden = true;
     this.unlockSheet.hidden = true;
+    this.restockSheet.hidden = true;
     this.pricingSheet.hidden = true;
     this.managementPanel.close();
     this.openSlot = null;
@@ -328,6 +371,7 @@ export class Hud {
    */
   get isGamePaused(): boolean {
     return (
+      !this.stationNamePanel.hidden ||
       !this.pricingSheet.hidden ||
       !this.daySummaryPanel.hidden ||
       this.managementPanel.isOpen
@@ -427,6 +471,21 @@ export class Hud {
           ? `${fuel.label} tankı dolu`
           : `${Math.round(quote.liters)} L ikmal: ${formatMoney(quote.cost)}`;
     }
+
+    const emergencyAvailable = this.station.canUseEmergencyFuelCredit;
+    const emergencyDebt = this.station.emergencyFuelCreditDebt;
+    this.emergencyRefuelButton.hidden = !emergencyAvailable && emergencyDebt <= 0.01;
+    this.emergencyRefuelButton.disabled = !emergencyAvailable;
+    this.emergencyRefuelButton.classList.toggle('repaying', emergencyDebt > 0.01);
+    this.setText(
+      this.emergencyRefuelText,
+      emergencyAvailable
+        ? '20 L seç · sonraki yakıt satışlarından taksitle kesilir'
+        : `Kalan borç ${formatMoney(emergencyDebt)} · satışlardan %${Math.round(EMERGENCY_CREDIT_REPAYMENT_RATE * 100)}`,
+    );
+    this.emergencyRefuelButton.title = emergencyAvailable
+      ? 'Kasa ve satılabilir yakıt kalmadığında bir kez kullanılabilir'
+      : 'Acil ikmal borcu yakıt satışlarından tahsil ediliyor';
   }
 
   /**
@@ -531,6 +590,160 @@ export class Hud {
     return { element: label, bar };
   }
 
+  // ---------- Depo ikmali ----------
+
+  private openRestockSheet(fuelType: FuelType): void {
+    this.closeSheets();
+
+    const fuel = findFuel(fuelType);
+    this.restockKicker.textContent = 'Depo ikmali';
+    this.restockTitle.textContent = `${fuel.label} ikmali`;
+    this.restockNote.textContent =
+      'Küçük partiyle nakdi koru ya da tek seferde daha fazla stok al. ' +
+      'Tanker teslimat sırasında bu yakıtı satışa kapatır.';
+    this.restockOptions.replaceChildren();
+
+    const shownLiters = new Set<number>();
+    for (const requestedLiters of RESTOCK_OPTIONS_LITERS) {
+      const quote = this.station.restockQuote(fuelType, requestedLiters);
+      const roundedLiters = Math.round(quote.liters);
+      if (quote.liters < 0.5 || shownLiters.has(roundedLiters)) continue;
+      shownLiters.add(roundedLiters);
+
+      const option = this.createRestockOption(
+        `${roundedLiters} L`,
+        `${formatMoney(quote.cost)} · tankerle gelir`,
+        fuel.cssColor,
+      );
+      option.classList.toggle('unaffordable', !this.station.canAfford(quote.cost));
+      option.addEventListener('click', () => {
+        const result = this.onRestock?.(fuelType, requestedLiters) ?? 'money';
+        this.finishRestockRequest(fuelType, quote, result);
+      });
+      this.restockOptions.appendChild(option);
+    }
+
+    if (this.restockOptions.childElementCount === 0) {
+      this.restockNote.textContent = `${fuel.label} tankı zaten dolu.`;
+    }
+    this.restockSheet.hidden = false;
+  }
+
+  private openEmergencyRestockSheet(): void {
+    if (!this.station.canUseEmergencyFuelCredit) return;
+
+    this.closeSheets();
+    this.restockKicker.textContent = 'Kasa kilidi';
+    this.restockTitle.textContent = 'Acil ikmal kredisi';
+    this.restockNote.textContent =
+      `Satılabilir yakıt ve nakit kalmadı. Bir yakıt seç; borç sonraki yakıt ` +
+      `satışlarından %${Math.round(EMERGENCY_CREDIT_REPAYMENT_RATE * 100)} oranında tahsil edilir.`;
+    this.restockOptions.replaceChildren();
+
+    for (const fuel of FUELS) {
+      const quote = this.station.emergencyFuelCreditQuote(fuel.id);
+      if (quote.liters < 0.5) continue;
+
+      const option = this.createRestockOption(
+        `${fuel.label} · ${Math.round(quote.liters)} L`,
+        `${formatMoney(quote.debt)} geri ödeme · peşin ödeme yok`,
+        fuel.cssColor,
+      );
+      option.classList.add('emergency');
+      option.addEventListener('click', () => {
+        const result = this.onEmergencyRestock?.(fuel.id) ?? 'unavailable';
+        this.finishEmergencyRestockRequest(fuel.id, quote.debt, result);
+      });
+      this.restockOptions.appendChild(option);
+    }
+
+    this.restockSheet.hidden = false;
+  }
+
+  private createRestockOption(
+    title: string,
+    detail: string,
+    color: string,
+  ): HTMLButtonElement {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = 'restock-option';
+    option.style.setProperty('--restock-color', color);
+
+    const mark = document.createElement('i');
+    mark.setAttribute('aria-hidden', 'true');
+    const labels = document.createElement('span');
+    const heading = document.createElement('strong');
+    heading.textContent = title;
+    const description = document.createElement('small');
+    description.textContent = detail;
+    labels.append(heading, description);
+    const arrow = document.createElement('b');
+    arrow.setAttribute('aria-hidden', 'true');
+    arrow.textContent = '›';
+    option.append(mark, labels, arrow);
+    return option;
+  }
+
+  private finishRestockRequest(
+    fuelType: FuelType,
+    quote: { readonly liters: number; readonly cost: number },
+    result: RestockResult,
+  ): void {
+    const fuel = findFuel(fuelType);
+    if (result === 'ok' || result === 'queued') {
+      this.closeSheets();
+      this.showStockFeedback(
+        fuelType,
+        result === 'queued'
+          ? `${fuel.label} tankeri sıraya alındı`
+          : `${fuel.label} tankeri yola çıktı`,
+        false,
+      );
+      navigator.vibrate?.([18, 24, 24]);
+      return;
+    }
+
+    this.showStockFeedback(fuelType, this.restockFailureMessage(fuelType, quote.cost, result), true);
+  }
+
+  private finishEmergencyRestockRequest(
+    fuelType: FuelType,
+    debt: number,
+    result: EmergencyFuelCreditResult,
+  ): void {
+    const fuel = findFuel(fuelType);
+    if (result === 'ok' || result === 'queued') {
+      this.closeSheets();
+      this.showStockFeedback(
+        fuelType,
+        result === 'queued'
+          ? `${fuel.label} acil tankeri sıraya alındı`
+          : `${fuel.label} acil tankeri yola çıktı`,
+        false,
+      );
+      navigator.vibrate?.([18, 28, 24]);
+      return;
+    }
+
+    const message = result === 'unavailable'
+      ? 'Acil kredi şartları artık geçerli değil'
+      : this.restockFailureMessage(fuelType, debt, result);
+    this.showStockFeedback(fuelType, message, true);
+  }
+
+  private restockFailureMessage(
+    fuelType: FuelType,
+    cost: number,
+    result: RestockResult,
+  ): string {
+    const fuel = findFuel(fuelType);
+    if (result === 'full') return `${fuel.label} tankı dolu`;
+    if (result === 'pending') return 'Tanker depoyu dolduruyor';
+    if (result === 'busy') return 'Mevcut tanker teslimatını bitirsin';
+    return `${formatMoney(cost)} gerekiyor`;
+  }
+
   // ---------- Yakıt doldurma mini oyunu ----------
 
   private buildStockBars(): void {
@@ -557,30 +770,7 @@ export class Hud {
       button.append(label, track, value);
 
       button.addEventListener('click', () => {
-        const quote = this.station.restockQuote(fuel.id);
-        const result = this.onRestock?.(fuel.id) ?? 'money';
-        if (result === 'ok') {
-          this.showStockFeedback(
-            fuel.id,
-            `${fuel.label} tankeri yola çıktı`,
-            false,
-          );
-          navigator.vibrate?.([18, 24, 24]);
-          return;
-        }
-        const message =
-          result === 'full'
-            ? `${fuel.label} tankı dolu`
-            : result === 'pending'
-              ? 'Tanker depoyu dolduruyor'
-              : result === 'busy'
-                ? 'Önce mevcut tanker ayrılsın'
-                : `${formatMoney(quote.cost)} gerekiyor`;
-        this.showStockFeedback(
-          fuel.id,
-          message,
-          true,
-        );
+        this.openRestockSheet(fuel.id);
       });
 
       this.stockRows.set(fuel.id, { button, fill, value });
@@ -917,6 +1107,18 @@ export class Hud {
       this.stockMessage.textContent = 'İkmal için bara dokun';
       this.stockFeedbackTimer = null;
     }, 1600);
+  }
+
+  /** İlk adlandırma ekranını oyunun üstünde tutar ve klavyeyi doğrudan açar. */
+  private openStationNamePrompt(): void {
+    this.stationNamePanel.hidden = false;
+    requestAnimationFrame(() => this.stationNameInput.focus());
+  }
+
+  private applyStationName(): void {
+    const stationName = this.station.stationName;
+    this.setText(this.stationNameLabel, stationName || 'Yeni istasyon');
+    document.title = stationName.length > 0 ? `${stationName} · Petrolyoner` : 'Petrolyoner';
   }
 
   // ---------- Diğer ----------

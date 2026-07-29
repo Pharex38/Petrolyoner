@@ -106,6 +106,18 @@ body {
   backdrop-filter: blur(18px) saturate(145%);
 }
 
+.station-name {
+  overflow: hidden;
+  margin-bottom: 2px;
+  color: var(--accent);
+  font-size: clamp(10px, 2.8vw, 13px);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .money {
   font-family: var(--display-font);
   font-size: clamp(26px, 7.5vw, 40px);
@@ -468,6 +480,69 @@ body {
   animation: stock-bad 0.34s ease-out;
 }
 
+.emergency-refuel {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin-top: 7px;
+  padding: 7px 8px;
+  border: 1px solid rgba(255, 195, 92, 0.4);
+  border-radius: 10px;
+  background: linear-gradient(115deg, rgba(151, 94, 28, 0.28), rgba(46, 33, 20, 0.64));
+  color: #ffe5ad;
+  text-align: left;
+  box-shadow: inset 0 1px rgba(255, 248, 220, 0.08);
+}
+
+.emergency-refuel[hidden] {
+  display: none;
+}
+
+.emergency-refuel > span:first-child {
+  color: #ffc568;
+  font-size: 15px;
+  line-height: 1;
+  text-align: center;
+  text-shadow: 0 0 10px rgba(255, 189, 83, 0.55);
+}
+
+.emergency-refuel > span:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.emergency-refuel strong,
+.emergency-refuel small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emergency-refuel strong {
+  font-size: 10px;
+  letter-spacing: 0.01em;
+}
+
+.emergency-refuel small {
+  color: rgba(255, 230, 177, 0.78);
+  font-size: 8px;
+  font-weight: 500;
+}
+
+.emergency-refuel.repaying {
+  border-color: rgba(126, 171, 212, 0.44);
+  background: rgba(34, 57, 76, 0.72);
+  color: #cce6fa;
+}
+
+.emergency-refuel.repaying > span:first-child {
+  color: #8ec9f5;
+  text-shadow: 0 0 10px rgba(105, 188, 241, 0.48);
+}
+
 @keyframes stock-good {
   45% {
     transform: scale(1.035);
@@ -828,6 +903,113 @@ body {
   background: rgba(255, 255, 255, 0.035);
   font-size: 12px !important;
   line-height: 1.4 !important;
+}
+
+/* --- Depo ikmali --- */
+
+.restock-sheet-inner {
+  max-width: 440px;
+}
+
+.restock-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.restock-header h2 {
+  margin-bottom: 0;
+}
+
+.restock-header .close-button {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+}
+
+.restock-note {
+  margin-top: 10px !important;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 12px !important;
+  line-height: 1.4 !important;
+}
+
+.restock-options {
+  display: grid;
+  gap: 8px;
+}
+
+.restock-option {
+  --restock-color: var(--accent);
+
+  display: grid;
+  grid-template-columns: 9px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--restock-color) 38%, rgba(255, 255, 255, 0.08));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--restock-color) 8%, rgba(255, 255, 255, 0.035));
+  color: var(--text);
+  text-align: left;
+  box-shadow: none;
+}
+
+.restock-option > i {
+  width: 9px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--restock-color);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--restock-color) 58%, transparent);
+}
+
+.restock-option > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.restock-option strong,
+.restock-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.restock-option strong {
+  font-size: 14px;
+}
+
+.restock-option small {
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.restock-option > b {
+  color: color-mix(in srgb, var(--restock-color) 70%, white);
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 0.7;
+}
+
+.restock-option.unaffordable {
+  border-color: rgba(255, 120, 106, 0.34);
+}
+
+.restock-option.unaffordable small {
+  color: #f2ae9d;
+}
+
+.restock-option.emergency {
+  border-color: rgba(255, 195, 92, 0.48);
+  background: linear-gradient(110deg, rgba(139, 82, 20, 0.23), rgba(255, 255, 255, 0.035));
 }
 
 .pricing-section + .pricing-section {
@@ -1955,6 +2137,13 @@ button:disabled {
   cursor: default;
 }
 
+.emergency-refuel:disabled,
+.emergency-refuel.repaying:disabled {
+  border-color: rgba(126, 171, 212, 0.44);
+  background: rgba(34, 57, 76, 0.72);
+  color: #cce6fa;
+}
+
 button:not(:disabled):active {
   transform: scale(0.975);
   transition: transform 100ms ease-out;
@@ -2035,6 +2224,63 @@ button:not(:disabled):active {
 
 .dialog strong {
   color: var(--accent);
+}
+
+.station-name-overlay {
+  z-index: 40;
+  background:
+    radial-gradient(circle at 50% 26%, rgba(66, 212, 190, 0.16), transparent 42%),
+    rgba(2, 6, 9, 0.84);
+}
+
+.station-name-dialog {
+  text-align: left;
+}
+
+.station-name-dialog .order-label {
+  margin: 0 0 5px;
+}
+
+.station-name-dialog h2 {
+  margin-bottom: 8px;
+}
+
+.station-name-dialog p:not(.order-label) {
+  margin-bottom: 18px;
+}
+
+.station-name-field {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 18px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.station-name-field input {
+  width: 100%;
+  min-height: 52px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 13px;
+  outline: none;
+  background: rgba(4, 8, 12, 0.68);
+  color: var(--text);
+  font: inherit;
+  font-size: 17px;
+  touch-action: manipulation;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.station-name-field input::placeholder {
+  color: #7d8790;
+}
+
+.station-name-field input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(66, 212, 190, 0.18);
 }
 
 .day-summary-dialog .order-label {

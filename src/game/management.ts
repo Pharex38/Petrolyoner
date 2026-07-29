@@ -97,6 +97,10 @@ const BASE_OIL_PRICE = 70;
 const PRODUCTION_PER_WORKER_PER_SECOND = 0.085;
 const CRUDE_BATCH = 100;
 const BLACK_MARKET_UNLOCK_COST = 25_000;
+const REGULATION_CHECK_MIN_SECONDS = 42;
+const REGULATION_CHECK_MAX_SECONDS = 58;
+const REGULATION_RECOVERY_MIN_SECONDS = 72;
+const REGULATION_RECOVERY_MAX_SECONDS = 96;
 
 const WORKER_TEMPLATES: readonly WorkerState[] = [
   {
@@ -940,40 +944,84 @@ export class ManagementSystem {
     const state = this.state;
     state.nextRegulationSeconds -= deltaSeconds;
     if (state.nextRegulationSeconds > 0) return;
-    state.nextRegulationSeconds = randomBetween(22, 34);
+    // Kasa boşken yeni ceza uyarısı üretmek oyuncuya toparlanma alanı bırakmaz.
+    // Borç sistemi olmadığı için sıfır bakiyede tahsil edilecek bir şey de yok.
+    if (this.data.money <= 0) {
+      state.nextRegulationSeconds = randomBetween(
+        REGULATION_RECOVERY_MIN_SECONDS,
+        REGULATION_RECOVERY_MAX_SECONDS,
+      );
+      return;
+    }
+    state.nextRegulationSeconds = randomBetween(
+      REGULATION_CHECK_MIN_SECONDS,
+      REGULATION_CHECK_MAX_SECONDS,
+    );
 
-    const carbonViolation = state.carbonIndex >= 72;
-    const spillViolation = state.spillRisk >= 58;
+    const carbonViolation = state.carbonIndex >= 82;
+    const spillViolation = state.spillRisk >= 68;
     if (!carbonViolation && !spillViolation) {
-      if (state.carbonIndex < 32) return;
-      const tax = Math.round(600 + state.carbonIndex * 26);
-      this.data.money = Math.max(0, this.data.money - tax);
-      state.environmentalTaxesPaid += tax;
+      if (state.carbonIndex < 42) return;
+      const tax = Math.round(350 + state.carbonIndex * 14);
+      const paid = this.collectRegulationPayment(tax, 0.18);
+      if (paid <= 0) {
+        state.nextRegulationSeconds = randomBetween(
+          REGULATION_RECOVERY_MIN_SECONDS,
+          REGULATION_RECOVERY_MAX_SECONDS,
+        );
+        return;
+      }
+      state.environmentalTaxesPaid += paid;
       this.emit(
         'Karbon vergisi',
-        `Orta düzey salım için ₺${tax} çevre vergisi tahsil edildi.`,
+        `Orta düzey salım için ₺${paid} çevre vergisi tahsil edildi.`,
         'warning',
       );
       return;
     }
 
     const fine = Math.round(
-      2_500 +
-      state.carbonIndex * (carbonViolation ? 68 : 18) +
-      state.spillRisk * (spillViolation ? 82 : 12),
+      1_200 +
+      state.carbonIndex * (carbonViolation ? 34 : 10) +
+      state.spillRisk * (spillViolation ? 42 : 8),
     );
-    this.data.money = Math.max(0, this.data.money - fine);
-    state.legalFinesPaid += fine;
-    state.publicSupport = clamp(state.publicSupport - 13, 0, 100);
-    state.reputation = clamp(state.reputation - 10, 0, 100);
-    state.protestSeconds = Math.max(state.protestSeconds, 28);
+    const paid = this.collectRegulationPayment(fine, 0.32);
+    if (paid <= 0) {
+      state.nextRegulationSeconds = randomBetween(
+        REGULATION_RECOVERY_MIN_SECONDS,
+        REGULATION_RECOVERY_MAX_SECONDS,
+      );
+      return;
+    }
+    const severity = paid / Math.max(1, fine);
+    state.legalFinesPaid += paid;
+    state.publicSupport = clamp(
+      state.publicSupport - Math.max(2, Math.round(7 * severity)),
+      0,
+      100,
+    );
+    state.reputation = clamp(
+      state.reputation - Math.max(2, Math.round(5 * severity)),
+      0,
+      100,
+    );
+    state.protestSeconds = Math.max(state.protestSeconds, 18);
     state.carbonIndex = Math.max(0, state.carbonIndex - 10);
     state.spillRisk = Math.max(0, state.spillRisk - 8);
     this.emit(
       'Çevre cezası',
-      `Yüksek ${spillViolation ? 'sızıntı riski' : 'karbon salımı'} nedeniyle ₺${fine} ceza kesildi.`,
+      `Yüksek ${spillViolation ? 'sızıntı riski' : 'karbon salımı'} nedeniyle ₺${paid} tahsil edildi.`,
       'bad',
     );
+  }
+
+  /** Denetim tahsilatı kasayı sıfırlamaz; oyuncu hizmet vererek toparlanabilir. */
+  private collectRegulationPayment(due: number, maximumCashShare: number): number {
+    const cash = Math.max(0, this.data.money);
+    const affordable = Math.floor(cash * clamp(maximumCashShare, 0, 1));
+    const paid = Math.min(Math.max(0, Math.round(due)), affordable);
+    this.data.money = Math.max(0, cash - paid);
+    return paid;
   }
 
   private updateStaffEvents(deltaSeconds: number): void {

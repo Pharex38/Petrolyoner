@@ -164,15 +164,14 @@ export class AmbientSystem {
   private readonly rainPositions: Float32Array;
   private readonly rainSpeeds: Float32Array;
   private readonly rainMaterial: THREE.LineBasicMaterial;
-  private readonly streetLights: THREE.PointLight[] = [];
-  private readonly streetLightPools: THREE.MeshBasicMaterial[] = [];
+  private readonly streetLights: THREE.SpotLight[] = [];
   private readonly puddles: THREE.Mesh[] = [];
   private readonly puddleMaterials: THREE.MeshBasicMaterial[] = [];
   private readonly flockVisual = createBirdFlock();
   private readonly storkVisual = createStork();
   private readonly lampMaterial = new THREE.MeshStandardMaterial({
-    color: 0xe4d5a6,
-    emissive: 0xffd77e,
+    color: 0xf0e7d3,
+    emissive: 0xffe1ad,
     emissiveIntensity: 0.05,
     roughness: 0.58,
   });
@@ -240,12 +239,9 @@ export class AmbientSystem {
 
   setDaylight(daylight: number): void {
     const nightStrength = 1 - Math.max(0, Math.min(1, daylight));
-    this.lampMaterial.emissiveIntensity = 0.05 + nightStrength * 2.4;
+    this.lampMaterial.emissiveIntensity = 0.05 + nightStrength * 3.1;
     for (const light of this.streetLights) {
-      light.intensity = nightStrength * 14;
-    }
-    for (const material of this.streetLightPools) {
-      material.opacity = nightStrength * 0.31;
+      light.intensity = nightStrength * 17;
     }
     for (const material of this.puddleMaterials) {
       material.color.setHex(daylight < 0.34 ? 0x774f2f : 0x638b9d);
@@ -590,29 +586,15 @@ export class AmbientSystem {
       head.castShadow = false;
       this.group.add(head);
 
-      // Gerçek ışık maliyetini artırmadan, her lambanın dibinde okunur sıcak
-      // bir aydınlık halkası bırak. Gece yağmurunda da yol yüzeyi okunur.
-      const poolMaterial = new THREE.MeshBasicMaterial({
-        color: 0xff9c4a,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-      });
-      const pool = new THREE.Mesh(new THREE.CircleGeometry(1.08, 18), poolMaterial);
-      pool.rotation.x = -Math.PI / 2;
-      pool.position.set(lampX, 0.101, z);
-      pool.scale.set(0.82, 1.38, 1);
-      pool.renderOrder = 2;
-      this.streetLightPools.push(poolMaterial);
-      this.group.add(pool);
-
-      // Her direğe ayrı ışık pahalıdır; görünürlük için seçilmiş dört direk yeterli.
+      // Her direğe ayrı ışık pahalıdır; görünen dört direkte gölgesiz SpotLight
+      // kullanmak, zemine çizilmiş yapay bir disk olmadan doğal yol konisi verir.
       if (index % 2 === 0) {
-        const light = new THREE.PointLight(0xffa04d, 0, 7.8, 1.65);
+        const light = new THREE.SpotLight(0xffe4b8, 0, 10.4, Math.PI / 4.4, 0.72, 1.5);
         light.position.set(lampX, 3.34, z);
+        light.target.position.set(lampX, 0, z + 0.3);
         light.castShadow = false;
         this.streetLights.push(light);
-        this.group.add(light);
+        this.group.add(light, light.target);
       }
 
       // Sabit yuva noktası kameranın gördüğü orta yola yakın seçilir.
