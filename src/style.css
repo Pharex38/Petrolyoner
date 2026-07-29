@@ -54,6 +54,22 @@ body {
   height: 100%;
 }
 
+/* iOS ana ekran uygulaması (black-translucent): içerik durum çubuğunun altına
+   kaydırılıyor ama yerleşim görüntü alanı büyümüyor — ekrandan tam
+   env(safe-area-inset-top) kadar kısa kalıyor ve fark altta siyah bant olur.
+   Farkı body'ye ekliyoruz.
+   vh/dvh KULLANMA: belge uzayınca ikisi de kısa değerden ekran boyuna
+   zıplıyor, sonuç 59pt taşma. Yüzde ise başlangıç kapsayıcı bloğuna bağlı ve
+   sabit kalıyor. #app da akışta kalmalı — position: fixed olursa WebKit kutuyu
+   kısa görüntü alanına geri kırpar. */
+@supports (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) {
+    body {
+      height: calc(100% + env(safe-area-inset-top));
+    }
+  }
+}
+
 #viewport {
   position: absolute;
   inset: 0;

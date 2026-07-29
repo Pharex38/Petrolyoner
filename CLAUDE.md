@@ -106,6 +106,17 @@ gerekir (aşağıdaki `step()`). "Ekranda para artıyor" gözlemine güvenme.
 Dolum sayacının üst sınırı bu listenin en yüksek değerini kapsamalı, yoksa hedefe
 ulaşılamayan sipariş çıkar.
 
+**iOS ana ekran uygulamasında yükseklik `%` ile kurulur, `vh`/`dvh` ile değil.**
+`black-translucent` durum çubuğu stili içeriği çubuğun altına kaydırıyor ama yerleşim
+görüntü alanını büyütmüyor: alan ekrandan tam `env(safe-area-inset-top)` kadar kısa
+kalıyor ve fark altta siyah bant olarak görünüyor. Ölçüm (iPhone 15): ekran 852,
+`innerHeight` 793, `documentElement.clientHeight` 793, üst inset 59.
+Çözüm `style.css` içinde: standalone + WebKit dalında `body { height: calc(100% +
+env(safe-area-inset-top)) }`. Denenip elenenler — `vh` ve `dvh` belge uzayınca kısa
+değerden ekran boyuna zıplayıp 59pt taşma yapıyor; `#app`'e `position: fixed` vermek
+kutuyu kısa görüntü alanına geri kırpıyor (yalnız kök arka planı banda kadar boyanıyor,
+sahne boyanmıyor). `#app` akışta kalmalı.
+
 **Mobil performans `pointer: coarse` ile ayrışıyor** (`world.ts`): piksel oranı 1.25,
 gölge haritası 512, görünür far bütçesi 4 araç. Sahneye maliyetli bir şey eklerken bu
 dalı da güncelle. `prefers-reduced-motion` de okunuyor.
