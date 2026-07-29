@@ -504,6 +504,16 @@ body {
   backdrop-filter: blur(15px) saturate(145%);
 }
 
+.day-badge {
+  padding: 2px 7px;
+  border-radius: 8px;
+  background: rgba(66, 212, 190, 0.16);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
 .market-build {
   position: absolute;
   top: calc(var(--safe-top) + 136px + var(--hud-stack-shift));
@@ -1978,6 +1988,49 @@ button:not(:disabled):active {
 
 .dialog strong {
   color: var(--accent);
+}
+
+.day-summary-dialog .order-label {
+  margin: 0 0 4px;
+}
+
+.day-summary-rows {
+  margin: 0 0 22px;
+  display: grid;
+  gap: 1px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  text-align: left;
+}
+
+.day-summary-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  background: rgba(9, 13, 17, 0.72);
+}
+
+.day-summary-row dt {
+  color: var(--text-dim);
+  font-size: 14px;
+}
+
+.day-summary-row dd {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.day-summary-row dd.good {
+  color: var(--accent);
+}
+
+.day-summary-row dd.bad {
+  color: var(--danger);
 }
 
 @media (max-width: 620px) {

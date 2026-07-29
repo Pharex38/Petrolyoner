@@ -43,15 +43,15 @@ import {
  */
 
 const GRASS_COLOR = 0x7db85f;
-// Referanstaki gibi açık beton: saha yoldan ve asfalttan net ayrışsın.
-const LOT_COLOR = 0xc8c6bd;
+// Saha betonu asfaltla aynı aileden, bir tık açık: yol ile arsa yine ayrışıyor
+// ama saha çimenin yanında parlamıyor.
+const LOT_COLOR = 0x474d56;
 const ROAD_COLOR = 0x2c3139;
 const LINE_COLOR = 0xd9d5c8;
 const ROAD_LINE_COLOR = 0xf0d27d;
 const CURB_COLOR = 0xb9bbb4;
 const SKY_COLOR = 0x9fc7dc;
 const NIGHT_SKY_COLOR = 0x101a2d;
-const DAY_CYCLE_SECONDS = 180;
 
 /** Sağdaki ana yolu da gösterecek, dikey ekrana göre ayarlanmış referans genişlik. */
 const TARGET_WIDTH = 14.1;
@@ -68,10 +68,13 @@ const PAN_THRESHOLD_PX = 12;
 const TARGET_HEIGHT = 17.5;
 
 /** İstasyonun sağındaki, NPC'lerin kullandığı ana yol. */
-/** İstasyon arsasının sınırları — yol tarafındaki kenar yolun kaldırımıyla hizalı. */
-const LOT_WIDTH = 13.5;
+/** İstasyon arsasının sınırları — yol tarafındaki kenar yolun kaldırımıyla hizalı.
+ *  Sol kenar market binasını kapsamak zorunda: bina MARKET_X (-5.05) merkezli ve
+ *  çatısı 7.65 geniş, yani x = -8.88'e kadar uzanıyor. Sağ kenar (6.05) yola
+ *  bakıyor, o yüzden genişletme hep soldan yapılmalı. */
+const LOT_WIDTH = 15.6;
 const LOT_DEPTH = 30;
-const LOT_CENTER_X = -0.7;
+const LOT_CENTER_X = -1.75;
 const LOT_CENTER_Z = 2.5;
 
 const ROAD_X = 7.75;
@@ -576,13 +579,6 @@ export class World {
     building.scale.y = lerp(0.025, 1, smooth(this.marketBuildProgress));
   }
 
-  get clockLabel(): string {
-    const totalMinutes = Math.floor(this.dayPhase * 24 * 60) % (24 * 60);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
-  }
-
   get isNightTime(): boolean {
     return this.nightTime;
   }
@@ -622,11 +618,12 @@ export class World {
     }
   }
 
-  /** Geliştirme ve denge kontrolü için oyun saatini doğrudan ayarlar. */
-  setTimeOfDay(hour: number): void {
-    const normalizedHour = ((hour % 24) + 24) % 24;
-    this.dayPhase = normalizedHour / 24;
-    this.updateDayNight(0);
+  /**
+   * Oyun saatini sahneye taşır. Faz oyun katmanında ilerler (bkz. game/clock.ts);
+   * sahne yalnızca ışığa, gökyüzüne ve farlara çevirir.
+   */
+  setDayPhase(phase: number): void {
+    this.dayPhase = ((phase % 1) + 1) % 1;
   }
 
   private addGround(): void {
@@ -1526,7 +1523,6 @@ export class World {
   /** Hızlandırılmış dünya saati; ışıklar ve araç farları alacakaranlıkta devreye girer. */
   private updateDayNight(deltaSeconds: number): void {
     this.elapsedWorldTime += deltaSeconds;
-    this.dayPhase = (this.dayPhase + deltaSeconds / DAY_CYCLE_SECONDS) % 1;
     this.daylightVisualTimer -= deltaSeconds;
     if (deltaSeconds > 0 && this.daylightVisualTimer > 0) return;
     this.daylightVisualTimer = 0.08;

@@ -8,6 +8,7 @@ import {
   type PendingFuelRestocks,
   type FuelStock,
 } from './fuel';
+import { DAY_START_PHASE, type DayOpening } from './clock';
 import { normalizeManagementState } from './management';
 import { DEFAULT_TRAFFIC_SIDE, isTrafficSide } from './traffic';
 import {
@@ -166,6 +167,35 @@ function migrate(input: unknown): PlayerData | null {
     attendants: Math.max(0, Math.floor(numberOr(raw.attendants, 0))),
     trafficSide: isTrafficSide(raw.trafficSide) ? raw.trafficSide : DEFAULT_TRAFFIC_SIDE,
     lastSeenUnixSeconds: numberOr(raw.lastSeenUnixSeconds, fallback.lastSeenUnixSeconds),
+    day: Math.max(1, Math.floor(numberOr(raw.day, 1))),
+    dayPhase: normalizeDayPhase(raw.dayPhase),
+    dayOpening: normalizeDayOpening(raw.dayOpening, raw),
+  };
+}
+
+function normalizeDayPhase(value: unknown): number {
+  const phase = numberOr(value, DAY_START_PHASE);
+  if (!Number.isFinite(phase)) return DAY_START_PHASE;
+  return ((phase % 1) + 1) % 1;
+}
+
+/**
+ * Gün açılışı v9'da geldi. Eski kayıtlarda alan yok; o zaman mevcut sayaçları
+ * açılış kabul ediyoruz, böylece ilk kapanış özeti sıfırdan başlar ve oyuncunun
+ * tüm geçmişi tek güne yığılmış gibi görünmez.
+ */
+function normalizeDayOpening(value: unknown, raw: Record<string, unknown>): DayOpening {
+  const source =
+    typeof value === 'object' && value !== null
+      ? value as Record<string, unknown>
+      : raw;
+
+  return {
+    money: numberOr(source.money, 0),
+    totalEarned: numberOr(source.totalEarned, 0),
+    servedCars: numberOr(source.servedCars, 0),
+    missedCars: numberOr(source.missedCars, 0),
+    marketSales: numberOr(source.marketSales, 0),
   };
 }
 

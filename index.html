@@ -54,9 +54,10 @@
           <div id="stock-bars" class="stock-bars"></div>
         </aside>
 
-        <div class="time-chip" aria-label="Oyun saati">
+        <div class="time-chip" aria-label="Oyun günü ve saati">
           <span id="day-icon" aria-hidden="true">☀</span>
           <span id="game-clock">08:00</span>
+          <span id="game-day" class="day-badge">1. gün</span>
         </div>
 
         <button id="market-build" class="market-build" type="button">
@@ -190,6 +191,16 @@
             Kararların talep, risk ve üretimi doğrudan etkiler.
           </p>
           <div id="management-body" class="management-body"></div>
+        </div>
+      </div>
+
+      <!-- Gün kapanış özeti -->
+      <div id="day-summary" class="overlay" hidden>
+        <div class="dialog day-summary-dialog">
+          <p class="order-label">Gün kapanışı</p>
+          <h2 id="day-summary-title">1. gün bitti</h2>
+          <dl class="day-summary-rows" id="day-summary-rows"></dl>
+          <button id="day-summary-continue" type="button">Yeni güne başla</button>
         </div>
       </div>
 

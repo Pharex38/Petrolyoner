@@ -50,7 +50,9 @@ Three.js'e taşındığında bu katman neredeyse birebir aktarıldı.) Yeni oyun
 
 ```
 world.updateTraffic(delta)      → yol trafiği ilerler, giriş kapısına gelen NPC'ler haber verir
-station.tick(delta, aktifSlot)  → oyun mantığı
+station.tick(delta, aktifSlot)  → oyun mantığı, oyun saati de burada ilerler
+world.setDayPhase(...)          → saat sahneye taşınır (ışık, gökyüzü, farlar)
+station.takeDayReport()         → gece yarısını geçtiysek kapanış özeti
 world.syncCars / render         → mantıktaki arabalar mesh'lere yansır
 hud.update / syncCarLabels      → DOM güncellenir
 ```
@@ -67,9 +69,21 @@ Ters yönde `station.canAdvanceCar`, sahne katmanına "bu araç ilerleyebilir mi
 (rota rezervasyonu, gövde çakışmasını önler). Bu iki callback mantık ve sahneyi
 birbirine bağlayan tek yerdir; sırayı bozarsan araçlar üst üste biner.
 
+### Oyun saati ve gün
+
+Saat `game/clock.ts` içinde tanımlı, `DAY_CYCLE_SECONDS` bir oyun gününün gerçek
+süresidir. Faz **oyun katmanında** ilerler (`station.advanceClock`) ve kayda yazılır;
+sahne yalnızca `world.setDayPhase()` ile aldığı değeri ışığa çevirir. Sahnenin kendi
+saatini tutmasına dönme — gün sayacı kaydedilmek zorunda.
+
+Gece yarısını geçen kare, `station.takeDayReport()` ile bir kapanış özeti üretir.
+Rapor `data.dayOpening` fotoğrafından fark alınarak çıkar, sonra fotoğraf tazelenir.
+`takeDayReport()` **tüketicidir**: ikinci çağrıda null döner, aynı gün iki kez
+raporlanmaz. HUD paneli açıkken `hud.isGamePaused` true olur, döngü durur.
+
 ### Kayıt ve şema göçü
 
-`SAVE_VERSION` şu an **8**, localStorage anahtarı `petrolyoner.save`.
+`SAVE_VERSION` şu an **9**, localStorage anahtarı `petrolyoner.save`.
 `PlayerData`'ya alan eklerken:
 
 1. `state.ts` içinde alanı ve `createNewGame()` varsayılanını ekle
@@ -131,6 +145,7 @@ dalı da güncelle. `prefers-reduced-motion` de okunuyor.
 | Market ürün fiyat–talep dengesi | `game/market.ts` |
 | Personel, sendika, çevre, rakipler, krizler, kara borsa | `game/management.ts` |
 | Pompacı ücreti, komisyonu ve tepki süresi | `game/station.ts` |
+| Gün uzunluğu ve günün başlangıç saati | `game/clock.ts` |
 
 ## Dev konsol kancası
 

@@ -1,5 +1,6 @@
 import type { DemandLevel, FuelInfo, FuelType } from '../game/fuel';
 import { AMOUNT_OPTIONS, FUELS, findFuel } from '../game/fuel';
+import type { DayReport } from '../game/clock';
 import { formatDuration, formatMoney } from '../game/format';
 import type { ManagementEvent } from '../game/management';
 import { MARKET_ITEMS } from '../game/market';
@@ -114,6 +115,7 @@ export class Hud {
   private readonly stockBars = requireElement('stock-bars');
   private readonly stockMessage = requireElement('stock-message');
   private readonly clockLabel = requireElement('game-clock');
+  private readonly dayLabel = requireElement('game-day');
   private readonly dayIcon = requireElement('day-icon');
   private readonly marketBuildButton = requireElement<HTMLButtonElement>('market-build');
   private readonly marketBuildLabel = requireElement('market-build-label');
@@ -143,6 +145,10 @@ export class Hud {
 
   private readonly offlinePanel = requireElement('offline');
   private readonly offlineText = requireElement('offline-text');
+
+  private readonly daySummaryPanel = requireElement('day-summary');
+  private readonly daySummaryTitle = requireElement('day-summary-title');
+  private readonly daySummaryRows = requireElement('day-summary-rows');
 
   private readonly carLabels = new Map<number, CarLabelEntry>();
   private readonly lastText = new Map<HTMLElement, string>();
@@ -213,6 +219,10 @@ export class Hud {
 
     requireElement('offline-continue').addEventListener('click', () => {
       this.offlinePanel.hidden = true;
+    });
+
+    requireElement('day-summary-continue').addEventListener('click', () => {
+      this.daySummaryPanel.hidden = true;
     });
 
     this.marketBuildButton.hidden = this.station.marketBuilt;
@@ -334,7 +344,11 @@ export class Hud {
    * Servis paneli buna dahil değil — o zaten oyunun kendisi.
    */
   get isGamePaused(): boolean {
-    return !this.pricingSheet.hidden || this.managementPanel.isOpen;
+    return (
+      !this.pricingSheet.hidden ||
+      !this.daySummaryPanel.hidden ||
+      this.managementPanel.isOpen
+    );
   }
 
   get isServeSheetOpen(): boolean {
@@ -388,7 +402,8 @@ export class Hud {
 
     this.updateDemandIndicator();
 
-    this.setText(this.clockLabel, world.clockLabel);
+    this.setText(this.clockLabel, this.station.clockLabel);
+    this.setText(this.dayLabel, `${this.station.day}. gün`);
     this.setText(this.dayIcon, world.weatherIcon);
     if (!data.marketBuilt) {
       this.marketBuildButton.hidden = false;
@@ -956,6 +971,34 @@ export class Hud {
       `<strong>${formatMoney(report.earnings)}</strong> kazandı.`;
 
     this.offlinePanel.hidden = false;
+  }
+
+  /** Gece yarısı biten günün özetini açar; panel açıkken oyun durur. */
+  showDaySummary(report: DayReport): void {
+    this.setText(this.daySummaryTitle, `${report.day}. gün bitti`);
+
+    const netPrefix = report.netChange < 0 ? '−' : '+';
+    const rows: readonly (readonly [string, string, string])[] = [
+      ['Satış geliri', formatMoney(report.earned), 'good'],
+      [
+        'Kasa değişimi',
+        `${netPrefix}${formatMoney(Math.abs(report.netChange))}`,
+        report.netChange < 0 ? 'bad' : 'good',
+      ],
+      ['Dolan araç', `${report.served}`, ''],
+      ['Kaçan araç', `${report.missed}`, report.missed > 0 ? 'bad' : ''],
+      ['Market satışı', `${report.marketSales}`, ''],
+    ];
+
+    this.daySummaryRows.innerHTML = rows
+      .map(
+        ([label, value, tone]) =>
+          `<div class="day-summary-row"><dt>${label}</dt>` +
+          `<dd${tone === '' ? '' : ` class="${tone}"`}>${value}</dd></div>`,
+      )
+      .join('');
+
+    this.daySummaryPanel.hidden = false;
   }
 
   spawnFloater(text: string, x: number, y: number, bad = false): void {

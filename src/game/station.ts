@@ -28,6 +28,11 @@ import {
   ManagementSystem,
   type ManagementEvent,
 } from './management';
+import {
+  DAY_CYCLE_SECONDS,
+  clockLabel,
+  type DayReport,
+} from './clock';
 import { loadGame, saveGame } from './save';
 import { SLOTS, findSlot } from './slots';
 import type { TrafficSide } from './traffic';
@@ -164,6 +169,9 @@ export class Station {
 
   /** Talep trendinin karşılaştırıldığı yavaş referans; -1 = henüz ölçülmedi. */
   private demandBaseline = -1;
+
+  /** Gece yarısı üretilen, arayüz tarafından bir kez tüketilen kapanış özeti. */
+  private pendingDayReport: DayReport | null = null;
 
   constructor() {
     this.data = loadGame() ?? createNewGame();
@@ -460,6 +468,7 @@ export class Station {
 
   tick(deltaSeconds: number, activeServiceSlot: number | null = null): void {
     this.management.tick(deltaSeconds);
+    this.advanceClock(deltaSeconds);
     this.trafficCustomerCooldown = Math.max(0, this.trafficCustomerCooldown - deltaSeconds);
     this.updateDemandBaseline(deltaSeconds);
 
@@ -472,6 +481,68 @@ export class Station {
       this.autosaveTimer = 0;
       this.persist();
     }
+  }
+
+  /** Günün neresindeyiz: 0 = 00:00, 0.5 = 12:00. Sahne bunu ışığa çevirir. */
+  get dayPhase(): number {
+    return this.data.dayPhase;
+  }
+
+  get day(): number {
+    return this.data.day;
+  }
+
+  get clockLabel(): string {
+    return clockLabel(this.data.dayPhase);
+  }
+
+  /**
+   * Kapanış özetini bir kez verir. Arayüz paneli açarken çağırır; ikinci
+   * çağrıda null döner, böylece aynı gün iki kez raporlanmaz.
+   */
+  takeDayReport(): DayReport | null {
+    const report = this.pendingDayReport;
+    this.pendingDayReport = null;
+    return report;
+  }
+
+  /** Geliştirme ve denge kontrolü için oyun saatini doğrudan ayarlar. */
+  setTimeOfDay(hour: number): void {
+    this.data.dayPhase = (((hour % 24) + 24) % 24) / 24;
+  }
+
+  /**
+   * Saati ilerletir; gece yarısını geçtiyse günü kapatıp özeti hazırlar.
+   * Sayaç farkları buradan çıktığı için açılış fotoğrafı hemen tazelenir.
+   */
+  private advanceClock(deltaSeconds: number): void {
+    const next = this.data.dayPhase + deltaSeconds / DAY_CYCLE_SECONDS;
+    if (next < 1) {
+      this.data.dayPhase = next;
+      return;
+    }
+
+    this.data.dayPhase = next % 1;
+
+    const opening = this.data.dayOpening;
+    this.pendingDayReport = {
+      day: this.data.day,
+      earned: Math.round(this.data.totalEarned - opening.totalEarned),
+      netChange: Math.round(this.data.money - opening.money),
+      served: this.data.servedCars - opening.servedCars,
+      missed: this.data.missedCars - opening.missedCars,
+      marketSales: this.data.marketSales - opening.marketSales,
+    };
+
+    this.data.day += 1;
+    this.data.dayOpening = {
+      money: this.data.money,
+      totalEarned: this.data.totalEarned,
+      servedCars: this.data.servedCars,
+      missedCars: this.data.missedCars,
+      marketSales: this.data.marketSales,
+    };
+    this.persist();
   }
 
   /**

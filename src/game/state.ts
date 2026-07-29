@@ -10,9 +10,10 @@ import {
   type ManagementState,
 } from './management';
 import { createInitialMarketPrices, type MarketPrices } from './market';
+import { DAY_START_PHASE, type DayOpening } from './clock';
 import { DEFAULT_TRAFFIC_SIDE, type TrafficSide } from './traffic';
 
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 
 export interface PlayerData {
   saveVersion: number;
@@ -43,6 +44,12 @@ export interface PlayerData {
   trafficSide: TrafficSide;
   /** Oyunun son kapandığı an (saniye). Gece vardiyası kazancı bundan hesaplanır. */
   lastSeenUnixSeconds: number;
+  /** Kaçıncı gün oynanıyor; 1'den başlar, gece yarısı artar. */
+  day: number;
+  /** Günün neresindeyiz: 0 = 00:00, 0.5 = 12:00. */
+  dayPhase: number;
+  /** Gün başındaki sayaçlar; kapanış özeti bunlarla fark alınarak çıkar. */
+  dayOpening: DayOpening;
 }
 
 export function nowUnixSeconds(): number {
@@ -68,5 +75,14 @@ export function createNewGame(): PlayerData {
     attendants: 0,
     trafficSide: DEFAULT_TRAFFIC_SIDE,
     lastSeenUnixSeconds: nowUnixSeconds(),
+    day: 1,
+    dayPhase: DAY_START_PHASE,
+    dayOpening: {
+      money: 0,
+      totalEarned: 0,
+      servedCars: 0,
+      missedCars: 0,
+      marketSales: 0,
+    },
   };
 }

@@ -270,6 +270,11 @@ function step(delta: number): void {
   if (!hud.isGamePaused) {
     world.updateTraffic(delta);
     station.tick(delta, hud.activeServiceSlotIndex);
+    world.setDayPhase(station.dayPhase);
+
+    // Gece yarısını geçtiysek günü kapat; panel açılınca döngü kendiliğinden durur.
+    const dayReport = station.takeDayReport();
+    if (dayReport !== null) hud.showDaySummary(dayReport);
   }
   world.setProtestActive(station.management.isProtestActive);
   world.setStorageLevel(station.management.state.storageLevel);
@@ -353,9 +358,10 @@ if (import.meta.env.DEV) {
         return report;
       },
       time(hour: number) {
-        world.setTimeOfDay(hour);
+        station.setTimeOfDay(hour);
+        world.setDayPhase(station.dayPhase);
         hud.update(world);
-        return { saat: world.clockLabel, gece: world.isNightTime };
+        return { gun: station.day, saat: station.clockLabel, gece: world.isNightTime };
       },
       view() {
         world.resetView();
