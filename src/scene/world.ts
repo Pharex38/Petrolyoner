@@ -92,6 +92,11 @@ const TRAFFIC_CAR_SCALE = 0.9;
 const VEHICLE_Y = 0.085;
 /** Araç gövdeleri arasındaki en küçük mesafe; iç içe geçmeyi önler. */
 const MIN_TRAFFIC_GAP = 3.25;
+/**
+ * Normal otomobil gövdesinin yarısı. MIN_TRAFFIC_GAP bu ölçüye göre ayarlı:
+ * iki otomobil merkezleri 3.25 uzaktayken tamponları tam teğet duruyor.
+ */
+const DEFAULT_CAR_HALF_LENGTH = 1.62;
 const CAT_CROSSING_ZS = [-9, -2, 6, 14] as const;
 const CAT_START_X = ROAD_X - ROAD_WIDTH / 2 - 0.5;
 const CAT_END_X = ROAD_X + ROAD_WIDTH / 2 + 0.5;
@@ -165,6 +170,15 @@ const FUEL_TANKER_UNLOAD_SECONDS = 6.2;
 const FUEL_TANKER_ROUTE_RELEASE_PROGRESS = 0.82;
 const FUEL_TANKER_HALF_WIDTH = 0.86;
 const FUEL_TANKER_HALF_LENGTH = 2.15;
+/**
+ * Tanker giriş ağzında beklerken gövdesini geriye süpürerek dönüyor. Arkadan
+ * gelen yalnızca gövde boyu kadar geride durursa manevra alanına giriyor ve
+ * canAdvanceFuelTanker sonsuza dek false dönüyor: tanker giremez, arkadaki
+ * ilerleyemez, tüm şerit kilitlenir. Bu pay o süpürme alanını boş tutuyor.
+ */
+const FUEL_TANKER_MANEUVER_RESERVE = 1.1;
+/** Bekleyen tanker bu süre sonunda arkadaki kuyruğu yok sayıp manevraya başlar. */
+const FUEL_TANKER_WAIT_ESCAPE_SECONDS = 6;
 const ACTIVE_HEADLIGHT_RANGE_Z = 21;
 
 type TrafficDirection = -1 | 1;
@@ -1051,12 +1065,25 @@ export class World {
     };
   }
 
-  /** Tanker bir sonraki noktaya geçmeden tüm araç gövdelerine karşı güvenlik kontrolü yapar. */
+  /**
+   * Tanker bir sonraki noktaya geçmeden tüm araç gövdelerine karşı güvenlik
+   * kontrolü yapar.
+   *
+   * ignoreBehind, uzun süre bekleyen tankerin kaçış valfi: manevra alanına
+   * girmiş olan arkadaki araç kendi başına geri gidemediği için, kilidi
+   * çözmek üzere sadece tam arkadaki gövdeler yok sayılır. Önden gelen veya
+   * yanal her şey hâlâ tankeri durdurur.
+   */
   private canAdvanceFuelTanker(
     delivery: FuelDelivery,
     next: CarTransform,
+    ignoreBehind = false,
   ): boolean {
     const proposed = this.fuelTankerTransform(next);
+    // flow() ileri yönü verir; arkadaki gövdenin izdüşümü negatif kalır.
+    const behindTanker = (mesh: THREE.Group): boolean =>
+      ignoreBehind &&
+      flow() * (mesh.position.z - delivery.truck.position.z) < 0;
     const overlaps = (mesh: THREE.Group, margin: number): boolean =>
       vehicleBodiesOverlap(
         proposed,
@@ -1072,9 +1099,17 @@ export class World {
       if (car !== delivery.truck && overlaps(car, 0.42)) return false;
     }
     for (const trafficCar of this.trafficCars) {
-      if (overlaps(trafficCar.mesh, 0.48)) return false;
+      if (!behindTanker(trafficCar.mesh) && overlaps(trafficCar.mesh, 0.48)) {
+        return false;
+      }
       const towTruck = trafficCar.event?.towTruck;
-      if (towTruck !== undefined && overlaps(towTruck, 0.5)) return false;
+      if (
+        towTruck !== undefined &&
+        !behindTanker(towTruck) &&
+        overlaps(towTruck, 0.5)
+      ) {
+        return false;
+      }
     }
 
     const rescue = this.rescueDelivery;
@@ -1846,11 +1881,18 @@ export class World {
         fuelTankerEntryStopZ(),
       );
       delivery.entryRoute = entryRoute;
+      // Bu kadar bekledikten sonra tıkanma yalnızca arkaya sıkışmış kuyruktan
+      // olabilir; kilidi açmak için tam arkadaki gövdeler yok sayılır.
+      const stuck = delivery.elapsed >= FUEL_TANKER_WAIT_ESCAPE_SECONDS;
       if (
         this.stationRouteOwnerId !== null ||
         this.rescueBlocksStationRoutes() ||
         this.emergencyVehicle !== null ||
-        !this.canAdvanceFuelTanker(delivery, sampleStationRoute(entryRoute, 0.035)) ||
+        !this.canAdvanceFuelTanker(
+          delivery,
+          sampleStationRoute(entryRoute, 0.035),
+          stuck,
+        ) ||
         delivery.elapsed < 0.65
       ) {
         return;
@@ -2313,7 +2355,13 @@ export class World {
   private stationCarHeadway(trafficCar: TrafficCar): number {
     let nearest = Number.POSITIVE_INFINITY;
 
-    const consider = (stationCar: THREE.Group): void => {
+    // MIN_TRAFFIC_GAP otomobil boyuna göre sabit. Öndeki araç daha uzunsa
+    // (tanker, çekici) takipçi onun kuyruğunun içine park ediyor; fazla gövdeyi
+    // mesafeden düşüp arkadakini o kadar geriye durduruyoruz.
+    const consider = (
+      stationCar: THREE.Group,
+      halfLength = DEFAULT_CAR_HALF_LENGTH,
+    ): void => {
       if (stationCar === trafficCar.mesh) return;
       if (
         Math.abs(stationCar.position.x - trafficCar.mesh.position.x) >
@@ -2322,9 +2370,10 @@ export class World {
         return;
       }
 
-      const forwardDistance = trafficCar.direction === -1
+      const bodyReserve = Math.max(0, halfLength - DEFAULT_CAR_HALF_LENGTH);
+      const forwardDistance = (trafficCar.direction === -1
         ? trafficCar.mesh.position.z - stationCar.position.z
-        : stationCar.position.z - trafficCar.mesh.position.z;
+        : stationCar.position.z - trafficCar.mesh.position.z) - bodyReserve;
       if (forwardDistance > 0) nearest = Math.min(nearest, forwardDistance);
     };
 
@@ -2352,7 +2401,16 @@ export class World {
           trafficCar.direction === -1
         ) ||
         (fuelDelivery.phase === 'departing' && trafficCar.direction === 1);
-      if (sharesTrafficDirection) consider(fuelDelivery.truck);
+      if (sharesTrafficDirection) {
+        // Manevra sırasında gövdenin ötesinde süpürme payı da boş kalmalı.
+        const maneuvering =
+          fuelDelivery.phase === 'waiting' || fuelDelivery.phase === 'entering';
+        consider(
+          fuelDelivery.truck,
+          FUEL_TANKER_HALF_LENGTH +
+            (maneuvering ? FUEL_TANKER_MANEUVER_RESERVE : 0),
+        );
+      }
     }
 
     return nearest;
@@ -3659,9 +3717,9 @@ function vehicleBodiesOverlap(
   margin: number,
 ): boolean {
   const firstHalfWidth = first.halfWidth ?? 0.75;
-  const firstHalfLength = first.halfLength ?? 1.62;
+  const firstHalfLength = first.halfLength ?? DEFAULT_CAR_HALF_LENGTH;
   const secondHalfWidth = second.halfWidth ?? 0.75;
-  const secondHalfLength = second.halfLength ?? 1.62;
+  const secondHalfLength = second.halfLength ?? DEFAULT_CAR_HALF_LENGTH;
   const firstAxes = [
     { x: Math.cos(first.rotation), z: -Math.sin(first.rotation) },
     { x: Math.sin(first.rotation), z: Math.cos(first.rotation) },
