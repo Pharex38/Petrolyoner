@@ -130,3 +130,8 @@ dengelenir ve canlı WebGL üstündeki pahalı panel blur'u kapatılır.
 - Müşteri hedef tutarları `AMOUNT_OPTIONS` içinden gelir; dolum sayacının üst sınırı
   bu listenin en yüksek değerini kapsamalı.
 - Keystore, imza sertifikası, `.env` asla commitlenmez.
+
+## Yazarlar
+
+- **Alperen Kocakaplan** — [@Pharex38](https://github.com/Pharex38)
+- **Berce** — [@bercedev](https://github.com/bercedev)
